@@ -6,9 +6,9 @@ aiosignal==1.4.0
 appdirs==1.4.4
 attrs==25.4.0
 botocore==1.40.61
--e git+ssh://git@github.com/CCI-GU-Sweden/CCIPyUtils.git@f8500b2766a0e43bb587129df7c4980f80113b85#egg=ccipy_omero&subdirectory=ccipy-omero
--e git+ssh://git@github.com/CCI-GU-Sweden/CCIPyUtils.git@f8500b2766a0e43bb587129df7c4980f80113b85#egg=ccipy_utils&subdirectory=ccipy-utils
--e git+ssh://git@github.com/CCI-GU-Sweden/CCIPyUtils.git@f8500b2766a0e43bb587129df7c4980f80113b85#egg=ccipy_yolo_wrapper&subdirectory=ccipy-yolo-utils
+git+ssh://git@github.com/CCI-GU-Sweden/CCIPyUtils.git@19507d2e0dcc0b19547c87d30aea757db91dbb78#egg=ccipy_omero&subdirectory=ccipy-omero
+git+ssh://git@github.com/CCI-GU-Sweden/CCIPyUtils.git@19507d2e0dcc0b19547c87d30aea757db91dbb78#egg=ccipy_utils&subdirectory=ccipy-utils
+git+ssh://git@github.com/CCI-GU-Sweden/CCIPyUtils.git@19507d2e0dcc0b19547c87d30aea757db91dbb78#egg=ccipy_yolo_wrapper&subdirectory=ccipy-yolo-utils
 certifi==2025.10.5
 charset-normalizer==3.4.4
 click==8.3.0
