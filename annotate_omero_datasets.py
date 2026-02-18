@@ -152,7 +152,7 @@ def main():
                 cls_id = int(box.cls[0])
                 conf = float(box.conf[0])
                 if conf < confidence_threshold:
-                    CCILogger.info(f"Skipping box with confidence {conf:.4f} below threshold {confidence_threshold}")
+                    CCILogger.warning(f"Skipping box with confidence {conf:.4f} below threshold {confidence_threshold}")
                     continue
                 xyxyn = box.xyxyn[0].tolist()  # [x1, y1, w, h] normalized
                 #cls_id_str = str(cls_id)
