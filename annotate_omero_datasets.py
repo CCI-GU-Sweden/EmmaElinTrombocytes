@@ -1,15 +1,13 @@
 from common import init, download_downscaled_image, class_to_color, get_class_name_from_id
-import os
 import argparse
 import shutil
+import distutils.util
 from pathlib import Path
 from ccipy.utils.cci_logger import CCILogger
-from ccipy.utils.cci_colors import Colors, rgb_color
-from ccipy.omero.cci_omero_connection import OmeroConnection
-from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
+from ccipy.utils.cci_colors import rgb_color
 from ccipy.yolo_utils.cci_yolo_wrapper import CCIYoloWrapper
-from ccipy.utils.roi_geometry import RoiGeometry, RoiRectangle
-from ccipy.omero.omero_colors import omero_rgb_to_rint
+from ccipy.utils.roi_geometry import RoiRectangle
+from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
 from ccipy.omero.geometry_to_roi import geometry_to_roi_shape
 from ccipy.omero.omero_roi_helpers import remove_rois_from_dataset
 
@@ -19,7 +17,7 @@ def main():
     # Add arguments
     parser.add_argument(
         "--dataset",
-        type=int,  # Convert to float (use `int` if you want integers)
+        type=int,
         required=True,
         help="List of numbers to process"
     )
@@ -31,6 +29,13 @@ def main():
     )
     
     parser.add_argument(
+        "--group",
+        type=str,
+        required=False,
+        help="Group for the OMERO session"
+    )
+    
+    parser.add_argument(
         "--model_dir",
         type=str,
         required=True,
@@ -39,18 +44,42 @@ def main():
     
     parser.add_argument(
         "--filter_border",
-        type=bool,
+        type=distutils.util.strtobool,
         required=False,
         default=False,
         help="Filter boxes at the border of the image"
     )
     
     parser.add_argument(
+        "--border_width",
+        type=int,
+        required=False,
+        default=0,
+        help="Filter boxes at the border of the image"
+    )
+    
+    parser.add_argument(
         "--remove_rois",
-        type=bool,
+        type=distutils.util.strtobool,
         required=False,
         default=False,
         help="Remove existing ROIs from the dataset"
+    )
+    
+    parser.add_argument(
+        "--use_test_host",
+        type=distutils.util.strtobool,
+        required=False,
+        default=False,
+        help="Use test host"
+    )
+    
+    parser.add_argument(
+        "--confidence_threshold",
+        type=float,
+        required=False,
+        default=0.0,
+        help="Set confidence threshold for predictions"
     )
 
     # Parse arguments
@@ -61,12 +90,20 @@ def main():
     model_dir = Path(args.model_dir)
     filter_border = args.filter_border
     remove_rois = args.remove_rois
+    border_width = args.border_width
+    group = args.group if args.group else "Emma-Josefsson-Lab"
+    use_test_host = args.use_test_host
+    confidence_threshold = args.confidence_threshold
 
     print("dataset:", dataset_id)
     print("Token:", token)
+    print("Group:", group)
     print("Model dir:", model_dir)
     print("Filter border boxes:", filter_border)
+    print("Border width:", border_width)
     print("Remove existing ROIs:", remove_rois)
+    print("Use test host:", use_test_host)
+    print("Confidence threshold:", confidence_threshold)
         
     # Ask for confirmation
     confirm = input("\nIs this correct? (Press 'y' to confirm, any other key to exit): ").strip().lower()
@@ -75,7 +112,7 @@ def main():
         return
 
     session_token = token
-    connection = init(session_token,"Emma-Josefsson-Lab")
+    connection = init(session_token, group, use_test_host=use_test_host)
 
     if remove_rois:
         remove_rois_from_dataset(connection, dataset_id)
@@ -114,6 +151,9 @@ def main():
             for box in boxes:
                 cls_id = int(box.cls[0])
                 conf = float(box.conf[0])
+                if conf < confidence_threshold:
+                    CCILogger.info(f"Skipping box with confidence {conf:.4f} below threshold {confidence_threshold}")
+                    continue
                 xyxyn = box.xyxyn[0].tolist()  # [x1, y1, w, h] normalized
                 #cls_id_str = str(cls_id)
                 class_name = get_class_name_from_id(cls_id)
@@ -121,7 +161,7 @@ def main():
                 color = rgb_color(r, g, b)
                 rect = RoiRectangle.from_normalized_xyxy(xyxyn[0], xyxyn[1], xyxyn[2], xyxyn[3], img_width, img_height, color, class_name + f" ({conf:.2f})")
                 #filter this rect if it is at the border of the image
-                if filter_border and (rect.x <= 0 or rect.y <= 0 or rect.x + rect.width >= img_width or rect.y + rect.height >= img_height):
+                if filter_border and (rect.x <= border_width or rect.y <= border_width or rect.x + rect.width >= img_width - border_width or rect.y + rect.height >= img_height - border_width):
                     CCILogger.warning(f"Skipping box at image border: {rect.x}, {rect.y}, {rect.width}, {rect.height}")
                     continue
                 
