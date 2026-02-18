@@ -3,6 +3,8 @@ import shutil
 import argparse
 import random
 import os
+import config
+
 from common import init, geometry_to_class_definitions, download_downscaled_image, label_names
 from ccipy.omero.cci_omero_connection import OmeroConnection
 from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
@@ -16,15 +18,13 @@ dataset_ids = []
 dataset_ids.append(1159)
 dataset_ids.append(1214)
 dataset_ids.append(1161)
+dataset_ids.append(1226)
 
 
 def create_vectors_from_rois(rois, vectors_dir: Path, image_name: str, orig_img_width: int, orig_img_height: int):
     geometries = rois_to_geometries(rois)
-    #try:
     vectors = geometries_to_vectors_normalized(geometries, orig_img_width, orig_img_height, geometry_to_class_definitions)
     save_vectors_to_txt(vectors, vectors_dir / Path(f"{image_name}.txt"))
-    #except Exception:
-    #    CCILogger.warning(f"Image {image_name} contains invalid colors...skipping")
 
 def download_images_with_rois(connection: OmeroConnection, dataset_ids: list[int], vectors_dir: Path, images_dir: Path, img_size: int = 512):
 
@@ -40,7 +40,7 @@ def download_images_with_rois(connection: OmeroConnection, dataset_ids: list[int
 def create_data_set(vectors_dir: Path, images_dir: Path, label_names: list[tuple[int, str]]):
 
     CCILogger.info("Creating data set...")
-    create_training_set(vectors_dir, images_dir, "dataset", label_names)
+    create_training_set(vectors_dir, images_dir, Path("dataset"), label_names)
 
 
 def test_yolo_model(images_dir: Path, img_idx = -1):
@@ -116,50 +116,17 @@ def main():
     images_dir = Path("datafiles/images")
     images_dir.mkdir(exist_ok=True, parents=True)
 
-    my_img_size = 512
+    my_img_size = config.YOLO_IMAGE_SIZE
 
     download_images_with_rois(connection, datasets, vectors_dir, images_dir, img_size=my_img_size)
     create_data_set(images_dir, vectors_dir, label_names)      
 
     yolo_wrapper = CCIYoloWrapper()
-    res = yolo_wrapper.train(data_set_file=Path("dataset/dataset.yaml"), epochs=500, batch=16, image_size=my_img_size)
+    res = yolo_wrapper.train(data_set_file=Path("dataset/dataset.yaml"), epochs=config.YOLO_EPOCHS, patience=config.YOLO_PATIENCE, batch=config.YOLO_BATCH_SIZE, image_size=my_img_size)
 
-    #model_dir = Path("runs/segment/train2/weights/best.pt")
     test_yolo_model(images_dir)
 
 
 
 if __name__ == "__main__":
     main()
-    
-# dataset_ids = []
-# dataset_ids.append(1159)
-# dataset_ids.append(1214)
-# dataset_ids.append(1161)
-
-# session_token = "472cd8a3-faab-43b8-a9fc-936d480adef5"
-
-# connection = init(session_token,"Emma-Josefsson-Lab")
-
-
-# datafiles_path = Path("datafiles")
-
-# shutil.rmtree(datafiles_path, ignore_errors=True)
-# shutil.rmtree("dataset", ignore_errors=True)
-
-# vectors_dir = Path("datafiles/vectors")
-# vectors_dir.mkdir(exist_ok=True, parents=True)
-# images_dir = Path("datafiles/images")
-# images_dir.mkdir(exist_ok=True, parents=True)
-
-# my_img_size = 512
-
-# download_images_with_rois(connection, dataset_ids, vectors_dir, images_dir, img_size=my_img_size)
-# create_data_set(images_dir, vectors_dir, label_names)      
-
-# yolo_wrapper = CCIYoloWrapper()
-# res = yolo_wrapper.train(data_set_file=Path("dataset/dataset.yaml"), epochs=500, batch=16, image_size=my_img_size)
-
-# #model_dir = Path("runs/segment/train2/weights/best.pt")
-# test_yolo_model(images_dir)
-
