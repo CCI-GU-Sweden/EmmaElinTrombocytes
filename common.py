@@ -103,9 +103,11 @@ def geometry_to_class_definitions(geometry: RoiGeometry) -> int:
     elif r == 255 and g == 255 and b == 0:
         return 1
     elif r == 152 and g == 0 and b == 255:
-        return 2
+        CCILogger.info(f"{label_names[2][1]} found but we dont use it for training, skipping")
+        raise ValueError(f"Skipping {label_names[2][1]} for training")
     elif r == 255 and g == 0 and b == 0:
-        return 3
+        CCILogger.info(f"{label_names[3][1]} found but we dont use it for training, skipping")
+        raise ValueError(f"Skipping {label_names[3][1]} for training")
     else:
         CCILogger.warning(f"Color on geometry is not according to spec {r} {g} {b}")
         raise ValueError("Wrong color")

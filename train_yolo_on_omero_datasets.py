@@ -4,7 +4,7 @@ import argparse
 import random
 import os
 import config
-
+import distutils.util
 from common import init, geometry_to_class_definitions, download_downscaled_image, label_names
 from ccipy.omero.cci_omero_connection import OmeroConnection
 from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
@@ -79,6 +79,29 @@ def main():
         required=True,
         help="Token for connections"
     )
+    
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        required=False,
+        help="Number of epochs to train"
+    )
+    
+    parser.add_argument(
+        "--patience",
+        type=int,
+        required=False,
+        help="Number of epochs with no improvement after which training will be stopped"
+    )
+    
+    parser.add_argument(
+        "--skip_dataset_creation",
+        type=distutils.util.strtobool,
+        required=False,
+        default=False,
+        help="Skip dataset creation and use existing dataset"
+    )
+    
 
     # Parse arguments
     args = parser.parse_args()
@@ -89,10 +112,27 @@ def main():
     else:
         datasets = args.datasets
         
+    epochs = config.YOLO_EPOCHS
+    if args.epochs is not None:
+        epochs = args.epochs
+        
+    patience = config.YOLO_PATIENCE
+    if args.patience is not None:
+        patience = args.patience
+        
+    skip_dataset_creation = args.skip_dataset_creation
+    if args.skip_dataset_creation is not None:
+        skip_dataset_creation = args.skip_dataset_creation
+        
+        
     token = args.token
 
     print("datasets:", datasets)
+    print("epochs:", epochs)
+    print("patience:", patience)
+    print("skip_dataset_creation:", skip_dataset_creation)
     print("Token:", token)
+    
     
     # Ask for confirmation
     confirm = input("\nIs this correct? (Press 'y' to confirm, any other key to exit): ").strip().lower()
@@ -102,27 +142,35 @@ def main():
 
     # Proceed if confirmed
     print("\nProceeding with the provided input...")
-    
+
+    my_img_size = config.YOLO_IMAGE_SIZE
+    vectors_dir = Path("datafiles/vectors") 
+    images_dir = Path("datafiles/images")
+
     session_token = token
     connection = init(session_token,"Emma-Josefsson-Lab")
     
-    datafiles_path = Path("datafiles")
+    if not skip_dataset_creation:
+        CCILogger.info("Creating training dataset from OMERO...")
+        
+        datafiles_path = Path("datafiles")
 
-    shutil.rmtree(datafiles_path, ignore_errors=True)
-    shutil.rmtree("dataset", ignore_errors=True)
+        shutil.rmtree(datafiles_path, ignore_errors=True)
+        shutil.rmtree("dataset", ignore_errors=True)
 
-    vectors_dir = Path("datafiles/vectors")
-    vectors_dir.mkdir(exist_ok=True, parents=True)
-    images_dir = Path("datafiles/images")
-    images_dir.mkdir(exist_ok=True, parents=True)
+        vectors_dir.mkdir(exist_ok=True, parents=True)
+        images_dir.mkdir(exist_ok=True, parents=True)
 
-    my_img_size = config.YOLO_IMAGE_SIZE
 
-    download_images_with_rois(connection, datasets, vectors_dir, images_dir, img_size=my_img_size)
-    create_data_set(images_dir, vectors_dir, label_names)      
+
+        download_images_with_rois(connection, datasets, vectors_dir, images_dir, img_size=my_img_size)
+        create_data_set(images_dir, vectors_dir, label_names)      
+
+    else:
+        CCILogger.info("Skipping training dataset creation, using existing dataset...")
 
     yolo_wrapper = CCIYoloWrapper()
-    res = yolo_wrapper.train(data_set_file=Path("dataset/dataset.yaml"), epochs=config.YOLO_EPOCHS, patience=config.YOLO_PATIENCE, batch=config.YOLO_BATCH_SIZE, image_size=my_img_size)
+    res = yolo_wrapper.train(data_set_file=Path("dataset/dataset.yaml"), epochs=epochs, patience=patience, batch=config.YOLO_BATCH_SIZE, image_size=my_img_size)
 
     test_yolo_model(images_dir)
 
