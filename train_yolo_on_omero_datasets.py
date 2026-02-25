@@ -3,9 +3,11 @@ import shutil
 import argparse
 import random
 import os
+from functools import partial
+from scipy import datasets
 import config
 import distutils.util
-from common import init, geometry_to_class_definitions, download_downscaled_image, label_names
+from common import init, geometry_to_class_definitions, download_downscaled_image, label_names, generate_date_directory
 from ccipy.omero.cci_omero_connection import OmeroConnection
 from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
 from ccipy.omero.roi_to_geometry import rois_to_geometries
@@ -21,12 +23,14 @@ dataset_ids.append(1161)
 dataset_ids.append(1226)
 
 
-def create_vectors_from_rois(rois, vectors_dir: Path, image_name: str, orig_img_width: int, orig_img_height: int):
+def create_vectors_from_rois(rois, vectors_dir: Path, image_name: str, orig_img_width: int, orig_img_height: int, skip_list = []):
     geometries = rois_to_geometries(rois)
-    vectors = geometries_to_vectors_normalized(geometries, orig_img_width, orig_img_height, geometry_to_class_definitions)
+    
+    
+    vectors = geometries_to_vectors_normalized(geometries, orig_img_width, orig_img_height, partial(geometry_to_class_definitions, skiplist=skip_list))
     save_vectors_to_txt(vectors, vectors_dir / Path(f"{image_name}.txt"))
 
-def download_images_with_rois(connection: OmeroConnection, dataset_ids: list[int], vectors_dir: Path, images_dir: Path, img_size: int = 512):
+def download_images_with_rois(connection: OmeroConnection, dataset_ids: list[int], vectors_dir: Path, images_dir: Path, img_size: int = 512, skip_list = []):
 
     with OmeroGetterCtx(connection) as getter:
         for dataset_id in dataset_ids:
@@ -35,7 +39,7 @@ def download_images_with_rois(connection: OmeroConnection, dataset_ids: list[int
                 CCILogger.info(f"Number of ROIs for image {img_id}: {len(rois)}")
                 if len(rois) > 0:
                     image_name, image_width, image_height = download_downscaled_image(connection, img_id, images_dir, img_size)
-                    create_vectors_from_rois(rois, vectors_dir, image_name.stem, image_width, image_height)
+                    create_vectors_from_rois(rois, vectors_dir, image_name.stem, image_width, image_height, skip_list)
                     
 def create_data_set(vectors_dir: Path, images_dir: Path, label_names: list[tuple[int, str]]):
 
@@ -102,6 +106,14 @@ def main():
         help="Skip dataset creation and use existing dataset"
     )
     
+    parser.add_argument(
+        "--skip_classes",
+        nargs="+",
+        type=int,
+        required=False,
+        help="Skip classes in training"
+    )
+    
 
     # Parse arguments
     args = parser.parse_args()
@@ -120,10 +132,13 @@ def main():
     if args.patience is not None:
         patience = args.patience
         
-    skip_dataset_creation = args.skip_dataset_creation
+    skip_dataset_creation = False
     if args.skip_dataset_creation is not None:
         skip_dataset_creation = args.skip_dataset_creation
         
+    class_skip_list = []
+    if args.skip_classes is not None:
+        class_skip_list = args.skip_classes
         
     token = args.token
 
@@ -161,9 +176,7 @@ def main():
         vectors_dir.mkdir(exist_ok=True, parents=True)
         images_dir.mkdir(exist_ok=True, parents=True)
 
-
-
-        download_images_with_rois(connection, datasets, vectors_dir, images_dir, img_size=my_img_size)
+        download_images_with_rois(connection, datasets, vectors_dir, images_dir, img_size=my_img_size, skip_list=class_skip_list)
         create_data_set(images_dir, vectors_dir, label_names)      
 
     else:
@@ -171,6 +184,19 @@ def main():
 
     yolo_wrapper = CCIYoloWrapper()
     res = yolo_wrapper.train(data_set_file=Path("dataset/dataset.yaml"), epochs=epochs, patience=patience, batch=config.YOLO_BATCH_SIZE, image_size=my_img_size)
+
+    save_path = generate_date_directory()
+    weights_path = res.save_dir / "weights"
+    shutil.copytree(weights_path, save_path)
+    output_file = save_path / "config_log.txt"
+
+    with open(output_file, "w") as f:
+        f.write(f"datasets: {datasets}\n")
+        f.write(f"epochs: {epochs}\n")
+        f.write(f"patience: {patience}\n")
+        f.write(f"skip_dataset_creation: {skip_dataset_creation}\n")
+        f.write(f"skip_classes: {class_skip_list}\n")
+        f.write("Token: SUPER_SECRET\n")
 
     test_yolo_model(images_dir)
 
