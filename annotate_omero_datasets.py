@@ -1,6 +1,7 @@
 from common import init, download_downscaled_image, class_to_color, get_class_name_from_id
 import argparse
 import shutil
+from datetime import datetime 
 import distutils.util
 from pathlib import Path
 from ccipy.utils.cci_logger import CCILogger
@@ -129,13 +130,27 @@ def main():
     yolo_wrapper.load_model(weights_path=model_dir)
 
     with OmeroGetterCtx(connection) as getter:
+
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d_%H-%M")   # e.g., 2026-02-25
+        output_file = "annotations_" + date_str + ".csv"
+
+        csv_file = open(output_file, "w")
+        csv_file.write("dataset,")
+        csv_file.write("class name,")
+        csv_file.write("class id,")
+        csv_file.write("color,")
+        csv_file.write("width,")
+        csv_file.write("height\n")
+
+        
     #    for dataset_id in dataset_ids:
         for img_id in getter.get_image_ids_from_dataset(dataset_id):
 
             img = getter.conn.get_image(img_id)
             img_name = img.getName()
-            if not img_name.endswith("ome.tiff"):
-                CCILogger.info(f"Skipping image {img_id} with name {img_name} as it is not an OME-TIFF.")
+            if not img_name.endswith("ome.tif"):
+                CCILogger.info(f"Skipping image {img_id} with name {img_name} as it is not an OME-TIF.")
                 continue
 
             img_path, img_width, img_height = download_downscaled_image(connection,  img_id, images_dir, img_size=my_img_size)
@@ -169,8 +184,17 @@ def main():
                 shapes.append(roi_shape)
                 CCILogger.info(f"Class ID: {cls_id}, Confidence: {conf:.4f}, Box: {xyxyn}, Color: ({r}, {g}, {b})")
                 
+                csv_file.write(f"{dataset_id},")
+                csv_file.write(f"{class_name},")
+                csv_file.write(f"{cls_id},")
+                csv_file.write(f"{color},")
+                csv_file.write(f"{rect.width},")
+                csv_file.write(f"{rect.height}\n")
+
             getter.set_rois_on_image(img_id, shapes)
-                #pred[0].save("output.png")
+        
+        csv_file.close()
+        connection.attach_file_to_dataset(dataset_id, output_file, description=f"Annotations for dataset {dataset_id}", mimetype="text/plain")
                 
     CCILogger.info("Done.")
     
