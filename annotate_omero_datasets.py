@@ -137,6 +137,8 @@ def main():
 
         csv_file = open(output_file, "w")
         csv_file.write("dataset,")
+        csv_file.write("image name,")
+        csv_file.write("image id,")
         csv_file.write("class name,")
         csv_file.write("class id,")
         csv_file.write("color,")
@@ -185,6 +187,8 @@ def main():
                 CCILogger.info(f"Class ID: {cls_id}, Confidence: {conf:.4f}, Box: {xyxyn}, Color: ({r}, {g}, {b})")
                 
                 csv_file.write(f"{dataset_id},")
+                csv_file.write(f"{img_name},")
+                csv_file.write(f"{img_id},")
                 csv_file.write(f"{class_name},")
                 csv_file.write(f"{cls_id},")
                 csv_file.write(f"{color},")
