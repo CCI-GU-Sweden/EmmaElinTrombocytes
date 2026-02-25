@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 import os
 from ccipy.utils.cci_logger import CCILogger
 from ccipy.omero.cci_omero_connection import OmeroConnection
@@ -9,6 +10,7 @@ from skimage.transform import resize
 from PIL import Image
 import tifffile as tiff
 import numpy as np
+import config
 
 label_names = [(0,"Cell"), (1,"Granule"), (2,"Atypical Granule"), (3,"Unclear if Granule")]
 
@@ -36,17 +38,28 @@ def init(session_token: str, session_group: str, use_test_host: bool = False, in
     connection.set_group_name_for_session(session_group)
     return connection
 
-def color_stretch(img, low_pt=1, high_pt=99):
-    img = img.astype(np.float32)
+def color_stretch(img, low_cut_off, low_pt=1, high_pt=99):
 
-    lo = np.percentile(img, low_pt)
-    hi = np.percentile(img, high_pt)
+    #check if large portion are zeroes
+    
+    dark = np.extract(img < low_cut_off, img)
+    if (frac := len(dark) / img.size) > config.FRACTION_DARK_TO_USE_CUTOFF:
+        CCILogger.info(f"Image has more ({frac*100:.2f}%) pixels than {config.FRACTION_DARK_TO_USE_CUTOFF*100}% below low_cutoff={low_cut_off}, filtering")
+
+        img_bool = img > low_cut_off
+        img_filterd = img[img_bool]
+        lo = np.percentile(img_filterd, low_pt)
+        hi = np.percentile(img_filterd, high_pt)
+    else:
+        lo = np.percentile(img, low_pt)
+        hi = np.percentile(img, high_pt)
+    
+    img = img.astype(np.float32)
 
     if hi <= lo:
         return np.zeros(img.shape, dtype=np.uint8)
 
     stretched = (img - lo) / (hi - lo)
-
     return stretched
 
 
@@ -56,8 +69,8 @@ def downscale_data(image: Path, target_size: tuple[int, int]) -> Path | None:
     img = tiff.imread(image)
     original_size = img.shape[:2]
     if original_size != target_size:
-        CCILogger.info(f"Color stetching image {image.name}")
-        stretched = color_stretch(img)
+        CCILogger.info(f"Color stretching image {image.name} of type {img.dtype}")
+        stretched = color_stretch(img, config.LOW_CUTOFF)
         
         CCILogger.info(f"Downscaling image {image.name} from {original_size} to {target_size}")
         if len(img.shape) == 3:
@@ -70,7 +83,7 @@ def downscale_data(image: Path, target_size: tuple[int, int]) -> Path | None:
         downscaled_img = np.clip(downscaled_img, 0, 255).astype(np.uint8)
         #downscaled_img = (downscaled_img * 65535).astype(np.uint16)
         im = Image.fromarray(downscaled_img)
-        img_name_png = str(image).replace(".ome.tiff",".png")
+        img_name_png = str(image).replace(".ome.tif",".png")
         im.save(img_name_png)
 
         #tiff.imwrite(img_name_tif, downscaled_img)
@@ -91,7 +104,7 @@ def download_downscaled_image(connection: OmeroConnection, img_id: int, images_d
         return new_img_name, img_width, img_height
 
 
-def geometry_to_class_definitions(geometry: RoiGeometry) -> int:
+def geometry_to_class_definitions(geometry: RoiGeometry, skiplist = []) -> int:
     # Blue (rgb(0, 181, 255)) = Cell
     # Yellow (rgb(255, 255, 0)) = Granule
     # Purple (rgb(152, 0, 255) = Atypical granule
@@ -99,18 +112,29 @@ def geometry_to_class_definitions(geometry: RoiGeometry) -> int:
     color = geometry.get_color()
     r, g, b, a = omero_rint_to_rgba(color)
     if r == 0 and g == 181 and b == 255:
+        if 0 in skiplist:
+            CCILogger.info(f"{label_names[0][1]} found but we dont use it for training, skipping")
+            raise ValueError(f"Skipping {label_names[0][1]} for training")
         return 0
     elif r == 255 and g == 255 and b == 0:
+        if 1 in skiplist:
+            CCILogger.info(f"{label_names[1][1]} found but we dont use it for training, skipping")
+            raise ValueError(f"Skipping {label_names[1][1]} for training")
         return 1
     elif r == 152 and g == 0 and b == 255:
-        CCILogger.info(f"{label_names[2][1]} found but we dont use it for training, skipping")
-        raise ValueError(f"Skipping {label_names[2][1]} for training")
+        if 2 in skiplist:
+            CCILogger.info(f"{label_names[2][1]} found but we dont use it for training, skipping")
+            raise ValueError(f"Skipping {label_names[2][1]} for training")
+        return 2
     elif r == 255 and g == 0 and b == 0:
-        CCILogger.info(f"{label_names[3][1]} found but we dont use it for training, skipping")
-        raise ValueError(f"Skipping {label_names[3][1]} for training")
+        if 3 in skiplist:
+            CCILogger.info(f"{label_names[3][1]} found but we dont use it for training, skipping")
+            raise ValueError(f"Skipping {label_names[3][1]} for training")
+        return 3
     else:
         CCILogger.warning(f"Color on geometry is not according to spec {r} {g} {b}")
         raise ValueError("Wrong color")
+    
     
 def class_to_color(class_id: int) -> tuple[int, int, int]:
     if class_id == 0:
@@ -124,3 +148,16 @@ def class_to_color(class_id: int) -> tuple[int, int, int]:
     else:
         CCILogger.warning(f"Class id {class_id} not according to spec")
         raise ValueError("Wrong class id")
+
+def generate_date_directory():
+    # Get current date and time
+    now = datetime.now()
+
+    # Format strings
+    date_str = now.strftime("%Y-%m-%d")   # e.g., 2026-02-25
+    time_str = now.strftime("%H-%M")      # e.g., 14-37
+
+    # Create directory path
+    base_path = Path(date_str)
+    full_path = base_path / time_str
+    return full_path
