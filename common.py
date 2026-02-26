@@ -21,9 +21,9 @@ def get_class_name_from_id(class_id: int) -> str:
     CCILogger.warning(f"Class id {class_id} not found in label names.")
     return "Unknown"
 
-OMERO_HOST = "omero-cci-cli.gu.se"
-OMERO_TEST_HOST = "omero-cli.test.gu.se"
-OMERO_PORT = '4064'
+# OMERO_HOST = "omero-cci-cli.gu.se"
+# OMERO_TEST_HOST = "omero-cli.test.gu.se"
+# OMERO_PORT = '4064'
 
 def init(session_token: str, session_group: str, use_test_host: bool = False, init_log: bool = True) -> OmeroConnection:
 
@@ -31,9 +31,9 @@ def init(session_token: str, session_group: str, use_test_host: bool = False, in
         CCILogger.setup_logger("logfile.log", "omero_test")
 
     if use_test_host:
-        connection = OmeroConnection(OMERO_TEST_HOST,OMERO_PORT,session_token)
+        connection = OmeroConnection(config.OMERO_TEST_HOST,config.OMERO_PORT,session_token)
     else:
-        connection = OmeroConnection(OMERO_HOST,OMERO_PORT,session_token)
+        connection = OmeroConnection(config.OMERO_HOST,config.OMERO_PORT,session_token)
     
     connection.set_group_name_for_session(session_group)
     return connection

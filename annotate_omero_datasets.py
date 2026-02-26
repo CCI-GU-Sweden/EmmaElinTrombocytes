@@ -1,6 +1,7 @@
 from common import init, download_downscaled_image, class_to_color, get_class_name_from_id
 import argparse
 import shutil
+import config
 from datetime import datetime 
 import distutils.util
 from pathlib import Path
@@ -10,7 +11,7 @@ from ccipy.yolo_utils.cci_yolo_wrapper import CCIYoloWrapper
 from ccipy.utils.roi_geometry import RoiRectangle
 from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
 from ccipy.omero.geometry_to_roi import geometry_to_roi_shape
-from ccipy.omero.omero_roi_helpers import remove_rois_from_dataset
+from ccipy.omero.omero_roi_helpers import remove_rois_from_dataset, remove_rois_from_dataset_by_name
 
 def main():
     parser = argparse.ArgumentParser(description="Process a list of numbers and a connection token.")
@@ -20,20 +21,20 @@ def main():
         "--dataset",
         type=int,
         required=True,
-        help="List of numbers to process"
+        help="ID of the OMERO dataset to annotate"
     )
     parser.add_argument(
         "--token",
         type=str,
         required=True,
-        help="Token for connections"
+        help="Token for OMERO connection"
     )
     
     parser.add_argument(
         "--group",
         type=str,
         required=False,
-        help="Group for the OMERO session"
+        help="Group to use for the OMERO session"
     )
     
     parser.add_argument(
@@ -56,7 +57,7 @@ def main():
         type=int,
         required=False,
         default=0,
-        help="Filter boxes at the border of the image"
+        help="Boxes closer to the border than this value (in pixels) will be filtered if --filter_border is set"
     )
     
     parser.add_argument(
@@ -64,7 +65,7 @@ def main():
         type=distutils.util.strtobool,
         required=False,
         default=False,
-        help="Remove existing ROIs from the dataset"
+        help="Remove existing ROIs from the dataset, using the value from config.AI_ROI_NAME to identify them"
     )
     
     parser.add_argument(
@@ -80,7 +81,7 @@ def main():
         type=float,
         required=False,
         default=0.0,
-        help="Set confidence threshold for predictions"
+        help="Set confidence threshold for predictions. Dont include boxes with confidence below this threshold."
     )
 
     # Parse arguments
@@ -96,14 +97,17 @@ def main():
     use_test_host = args.use_test_host
     confidence_threshold = args.confidence_threshold
 
-    print("dataset:", dataset_id)
+    print("Use test host:", use_test_host)
     print("Token:", token)
     print("Group:", group)
+
+    print("Dataset:", dataset_id)
+
+    print("Remove existing ROIs:", remove_rois)
+    
     print("Model dir:", model_dir)
     print("Filter border boxes:", filter_border)
     print("Border width:", border_width)
-    print("Remove existing ROIs:", remove_rois)
-    print("Use test host:", use_test_host)
     print("Confidence threshold:", confidence_threshold)
         
     # Ask for confirmation
@@ -116,7 +120,8 @@ def main():
     connection = init(session_token, group, use_test_host=use_test_host)
 
     if remove_rois:
-        remove_rois_from_dataset(connection, dataset_id)
+        #remove_rois_from_dataset(connection, dataset_id)
+        remove_rois_from_dataset_by_name(connection, dataset_id, config.AI_ROI_NAME)
 
     datafiles_path = Path("datafiles")
 
@@ -195,7 +200,7 @@ def main():
                 csv_file.write(f"{rect.width},")
                 csv_file.write(f"{rect.height}\n")
 
-            getter.set_rois_on_image(img_id, shapes)
+            getter.set_rois_on_image(img_id, shapes, name = config.AI_ROI_NAME)
         
         csv_file.close()
         connection.attach_file_to_dataset(dataset_id, output_file, description=f"Annotations for dataset {dataset_id}", mimetype="text/plain")
