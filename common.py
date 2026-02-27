@@ -1,6 +1,10 @@
+import argparse
 from pathlib import Path
 from datetime import datetime
 import os
+import yaml
+from yaml import Loader
+import distutils.util
 from ccipy.utils.cci_logger import CCILogger
 from ccipy.omero.cci_omero_connection import OmeroConnection
 from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
@@ -21,9 +25,51 @@ def get_class_name_from_id(class_id: int) -> str:
     CCILogger.warning(f"Class id {class_id} not found in label names.")
     return "Unknown"
 
-# OMERO_HOST = "omero-cci-cli.gu.se"
-# OMERO_TEST_HOST = "omero-cli.test.gu.se"
-# OMERO_PORT = '4064'
+def add_common_args(parser: argparse.ArgumentParser):
+    parser.add_argument(
+        '--config_name',
+        type=str,
+        required=False,
+        help='Name of the configuration to use from the config.yaml file') 
+    
+    parser.add_argument(
+        "--token",
+        type=str,
+        required=True,
+        help="Token for OMERO connection"
+    )
+    
+    parser.add_argument(
+        "--group",
+        type=str,
+        required=False,
+        help="Group to use for the OMERO session"
+    )
+    
+    parser.add_argument(
+        "--use_test_host",
+        type=distutils.util.strtobool,
+        required=False,
+        default=False,
+        help="Use test host"
+    )
+
+                        
+def read_config_from_file(config_type: str,  config_name: str = "", config_file: str = "config.yaml") -> tuple[dict, dict] | None:
+    with open(config_file, 'r') as f:
+        config_dict = yaml.load(f, Loader=Loader)
+        configs = config_dict.get(config_type, None)
+        if configs is None:
+            CCILogger.error(f"Config type {config_type} not found in config file {config_file}")
+            return None
+        common = configs.get("common", {})
+        conf_list = configs.get("configs", [])
+        conf = next(item for item in conf_list if item["name"] == config_name)
+        if conf is None:
+            CCILogger.error(f"Config name {config_name} not found in config file {config_file}")
+            return None
+        
+        return common, conf
 
 def init(session_token: str, session_group: str, use_test_host: bool = False, init_log: bool = True) -> OmeroConnection:
 

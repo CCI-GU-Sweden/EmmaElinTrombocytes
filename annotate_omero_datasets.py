@@ -1,9 +1,9 @@
-from common import init, download_downscaled_image, class_to_color, get_class_name_from_id
+from common import init, download_downscaled_image, class_to_color, get_class_name_from_id, add_common_args, read_config_from_file
 import argparse
 import shutil
 import config
-from datetime import datetime 
 import distutils.util
+from datetime import datetime 
 from pathlib import Path
 from ccipy.utils.cci_logger import CCILogger
 from ccipy.utils.cci_colors import rgb_color
@@ -11,7 +11,7 @@ from ccipy.yolo_utils.cci_yolo_wrapper import CCIYoloWrapper
 from ccipy.utils.roi_geometry import RoiRectangle
 from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
 from ccipy.omero.geometry_to_roi import geometry_to_roi_shape
-from ccipy.omero.omero_roi_helpers import remove_rois_from_dataset, remove_rois_from_dataset_by_name
+from ccipy.omero.omero_roi_helpers import remove_rois_from_dataset_by_name
 
 def main():
     parser = argparse.ArgumentParser(description="Process a list of numbers and a connection token.")
@@ -20,27 +20,14 @@ def main():
     parser.add_argument(
         "--dataset",
         type=int,
-        required=True,
-        help="ID of the OMERO dataset to annotate"
-    )
-    parser.add_argument(
-        "--token",
-        type=str,
-        required=True,
-        help="Token for OMERO connection"
-    )
-    
-    parser.add_argument(
-        "--group",
-        type=str,
         required=False,
-        help="Group to use for the OMERO session"
+        help="ID of the OMERO dataset to annotate"
     )
     
     parser.add_argument(
         "--model_dir",
         type=str,
-        required=True,
+        required=False,
         help="Relative path to model directory"
     )
     
@@ -69,14 +56,6 @@ def main():
     )
     
     parser.add_argument(
-        "--use_test_host",
-        type=distutils.util.strtobool,
-        required=False,
-        default=False,
-        help="Use test host"
-    )
-    
-    parser.add_argument(
         "--confidence_threshold",
         type=float,
         required=False,
@@ -84,18 +63,40 @@ def main():
         help="Set confidence threshold for predictions. Dont include boxes with confidence below this threshold."
     )
 
+    add_common_args(parser)
+
     # Parse arguments
     args = parser.parse_args()
 
+    if args.token is None:
+        CCILogger.error("Token is required. Please provide a token using the --token argument.")
+        exit(1)
+
     dataset_id = args.dataset        
     token = args.token
-    model_dir = Path(args.model_dir)
+    model_dir = ""
+    if args.model_dir is not None:
+        model_dir = Path(args.model_dir)
     filter_border = args.filter_border
     remove_rois = args.remove_rois
     border_width = args.border_width
     group = args.group if args.group else "Emma-Josefsson-Lab"
     use_test_host = args.use_test_host
     confidence_threshold = args.confidence_threshold
+
+    if args.config_name is not None:
+        config_from_file = read_config_from_file("annotate", args.config_name)
+        if config_from_file is not None:
+            common_config, config_from_file = config_from_file
+            dataset_id = config_from_file.get("dataset_id", dataset_id)
+            model_dir = Path(config_from_file.get("model_dir", model_dir))
+            filter_border = config_from_file.get("filter_border", filter_border)
+            remove_rois = config_from_file.get("remove_rois", remove_rois)
+            border_width = config_from_file.get("border_width", border_width)
+            confidence_threshold = config_from_file.get("confidence_threshold", confidence_threshold)
+            group = common_config.get("omero_group", group)
+            use_test_host = common_config.get("use_test_host", use_test_host)
+            #token = config_from_file.get("token", token)
 
     print("Use test host:", use_test_host)
     print("Token:", token)

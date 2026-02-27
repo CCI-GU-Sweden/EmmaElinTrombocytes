@@ -4,10 +4,9 @@ import argparse
 import random
 import os
 from functools import partial
-from scipy import datasets
 import config
 import distutils.util
-from common import init, geometry_to_class_definitions, download_downscaled_image, label_names, generate_date_directory
+from common import init, geometry_to_class_definitions, download_downscaled_image, label_names, generate_date_directory, add_common_args, read_config_from_file
 from ccipy.omero.cci_omero_connection import OmeroConnection
 from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
 from ccipy.omero.roi_to_geometry import rois_to_geometries
@@ -77,12 +76,6 @@ def main():
         required=False,
         help="List of numbers to process"
     )
-    parser.add_argument(
-        "--token",
-        type=str,
-        required=True,
-        help="Token for connections"
-    )
     
     parser.add_argument(
         "--epochs",
@@ -114,6 +107,7 @@ def main():
         help="Skip classes in training"
     )
     
+    add_common_args(parser)
 
     # Parse arguments
     args = parser.parse_args()
@@ -139,15 +133,46 @@ def main():
     class_skip_list = []
     if args.skip_classes is not None:
         class_skip_list = args.skip_classes
-        
+
+    if args.token is None:
+        CCILogger.error("Token is required. Please provide a token using the --token argument.")
+        exit(1)
+
     token = args.token
+
+    group = "Emma-Josefsson-Lab"
+    if args.group is not None:
+        group = args.group
+
+    use_test_host = False
+    if args.use_test_host is not None:
+        use_test_host = args.use_test_host
+
+    model_save_dir = ""
+    if args.config_name is not None:
+        config_from_file = read_config_from_file("train", args.config_name)
+        if config_from_file is not None:
+            common_config, config_from_file = config_from_file
+            datasets = config_from_file.get("datasets", datasets)
+            epochs = config_from_file.get("epochs", epochs)
+            patience = config_from_file.get("patience", patience)
+            skip_dataset_creation = config_from_file.get("skip_dataset_creation", skip_dataset_creation)
+            class_skip_list = config_from_file.get("skip_classes", class_skip_list)
+            model_save_dir = config_from_file.get("model_save_dir", model_save_dir)
+            group = common_config.get("omero_group", None)
+            use_test_host = common_config.get("use_test_host", False)
+
+            #token = config_from_file.get("token", token)
 
     print("datasets:", datasets)
     print("epochs:", epochs)
     print("patience:", patience)
+    print("skip_classes:", class_skip_list)
     print("skip_dataset_creation:", skip_dataset_creation)
+    print("group:", group)
+    print("use_test_host:", use_test_host)
+    print("model_save_dir:", model_save_dir)
     print("Token:", token)
-    
     
     # Ask for confirmation
     confirm = input("\nIs this correct? (Press 'y' to confirm, any other key to exit): ").strip().lower()
@@ -185,7 +210,7 @@ def main():
     yolo_wrapper = CCIYoloWrapper()
     res = yolo_wrapper.train(data_set_file=Path("dataset/dataset.yaml"), epochs=epochs, patience=patience, batch=config.YOLO_BATCH_SIZE, image_size=my_img_size)
 
-    save_path = generate_date_directory()
+    save_path = model_save_dir / generate_date_directory()
     weights_path = res.save_dir / "weights"
     shutil.copytree(weights_path, save_path)
     output_file = save_path / "config_log.txt"

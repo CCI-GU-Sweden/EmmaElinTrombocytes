@@ -1,0 +1,31 @@
+
+train:
+  common:
+    use_test_host: true
+    omero_group: "cci-staff"
+
+  configs:
+    - config:
+      name: asdf
+      model_save_dir: "train"
+      epochs: 300
+      patience: 200
+      skip_classes: [2, 3]
+      datasets: [1, 2]
+      skip_dataset_creation: true
+
+annotate:
+  common:
+    use_test_host: true
+    omero_group: "cci-staff"
+
+  configs:
+    - config:
+      name: asdf 
+      dataset_id: 1234
+      model_dir: "path/to/model/dir"
+      filter_border: true
+      border_width: 10
+      remove_rois: true
+      confidence_threshold: 0.0
+
