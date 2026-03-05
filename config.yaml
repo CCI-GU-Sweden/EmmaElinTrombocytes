@@ -11,8 +11,46 @@ train:
       epochs: 300
       patience: 200
       skip_classes: [2, 3]
-      datasets: [1, 2]
+      datasets: [1,2]
       skip_dataset_creation: true
+      #ignore_rois_by_xxx should be considered mutual exclusive! Both are optional though.
+      #If any of them is true ROIS matching either name or description from config.py variables will be ignored during training
+      #ignore_rois_by_description: true
+      ignore_rois_by_name: true
+
+
+    - config:
+      name: train_cells_and_granules_on_most_datasets
+      model_save_dir: "cells_and_granules"
+      epochs: 300
+      patience: 200
+      skip_classes: [2, 3]
+      datasets: [1159, 1206,1214,  1226, 1305, 1551, 1952, 2152, 2201]
+      skip_dataset_creation: false
+      omero_group: "Emma-Josefsson-Lab"
+      use_test_host: false
+
+      #ignore_rois_by_xxx should be considered mutual exclusive! Both are optional though.
+      #If any of them is true ROIS matching either name or description from config.py variables will be ignored during training
+      #ignore_rois_by_description: true
+      ignore_rois_by_name: true
+
+    - config:
+      name: train_cells_and_granules
+      model_save_dir: "cells_and_granules"
+      epochs: 300
+      patience: 200
+      skip_classes: [2, 3]
+      datasets: [1159, 1206,1214,  1226, 1305, 1551, 1952, 2152, 2201]
+      skip_dataset_creation: true
+      omero_group: "Emma-Josefsson-Lab"
+      use_test_host: false
+
+      #ignore_rois_by_xxx should be considered mutual exclusive! Both are optional though.
+      #If any of them is true ROIS matching either name or description from config.py variables will be ignored during training
+      #ignore_rois_by_description: true
+      ignore_rois_by_name: true
+
 
 annotate:
   common:
@@ -26,6 +64,7 @@ annotate:
       model_dir: "path/to/model/dir"
       filter_border: true
       border_width: 10
-      remove_rois: true
+      #remove rois: true removes rois matching name OR description from config.py AI_ROI_NAME = "from AI" and AI_ROI_DESCRIPTION = "auto annotated"
+      remove_rois: false
       confidence_threshold: 0.0
 

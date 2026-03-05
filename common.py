@@ -129,7 +129,11 @@ def downscale_data(image: Path, target_size: tuple[int, int]) -> Path | None:
         downscaled_img = np.clip(downscaled_img, 0, 255).astype(np.uint8)
         #downscaled_img = (downscaled_img * 65535).astype(np.uint16)
         im = Image.fromarray(downscaled_img)
-        img_name_png = str(image).replace(".ome.tif",".png")
+        if str(image).endswith("ome.tiff"):
+            img_name_png = str(image).replace(".ome.tiff",".png")
+        if str(image).endswith("ome.tif"):
+            img_name_png = str(image).replace(".ome.tif",".png")
+    
         im.save(img_name_png)
 
         #tiff.imwrite(img_name_tif, downscaled_img)

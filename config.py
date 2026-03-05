@@ -7,6 +7,7 @@ LOW_CUTOFF = 1000
 FRACTION_DARK_TO_USE_CUTOFF = 0.1
 
 AI_ROI_NAME = "from AI"
+AI_ROI_DESCRIPTION = "auto annotated"
 
 OMERO_HOST = "omero-cci-cli.gu.se"
 OMERO_TEST_HOST = "omero-cli.test.gu.se"
