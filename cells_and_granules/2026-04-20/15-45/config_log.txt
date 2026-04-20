@@ -1,0 +1,13 @@
+datasets: [1159, 1214, 1226, 1305, 1354, 1551, 1803, 1952, 2152, 2201, 2202, 2251, 2351, 2408, 2451]
+given epochs: 300
+run epochs: 292 (if lower than given epochs, EarlyStopping was applied
+patience: 200
+skip_dataset_creation: False
+skip_classes: [2, 3]
+batch_size: 16
+image_size: 1536
+ROI name: from AI
+ROI description: auto annotated
+ignore rois by name: True
+ignore rois by description: False
+Token: SUPER_SECRET

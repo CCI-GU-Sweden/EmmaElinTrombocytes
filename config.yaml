@@ -36,16 +36,15 @@ train:
       ignore_rois_by_name: true
 
     - config:
-      name: train_cells_and_granules
+      name: train_cells_and_granules_last
       model_save_dir: "cells_and_granules"
       epochs: 300
-      patience: 200
+      patience: 50
       skip_classes: [2, 3]
-      datasets: [1159, 1206,1214,  1226, 1305, 1551, 1952, 2152, 2201]
-      skip_dataset_creation: true
+      datasets: [1159, 1214, 1226, 1305, 1354, 1551, 1803, 1952, 2152, 2201, 2202, 2251, 2351, 2408, 2451]
+      skip_dataset_creation: false
       omero_group: "Emma-Josefsson-Lab"
       use_test_host: false
-
       #ignore_rois_by_xxx should be considered mutual exclusive! Both are optional though.
       #If any of them is true ROIS matching either name or description from config.py variables will be ignored during training
       #ignore_rois_by_description: true

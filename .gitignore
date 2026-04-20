@@ -210,3 +210,6 @@ __marimo__/
 #perso stuff
 *csv
 datafiles/*
+dataset-*/*
+dataset/*
+runs/*
