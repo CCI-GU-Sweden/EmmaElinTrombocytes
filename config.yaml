@@ -54,16 +54,16 @@ train:
 annotate:
   common:
     use_test_host: false
-    omero_group: "cci-staff"
+    omero_group: "Emma-Josefsson-Lab"
 
   configs:
     - config:
       name: annotate_cells_and_granules
-      dataset_id: 2401
-      model_dir: "cells_and_granules\\2026-03-04\\11-31\\best.pt"
+      dataset_id: 2607
+      model_dir: "cells_and_granules\\2026-04-16\\06-47\\best.pt"
       filter_border: true
       border_width: 10
       #remove rois: true removes rois matching name OR description from config.py AI_ROI_NAME = "from AI" and AI_ROI_DESCRIPTION = "auto annotated"
-      remove_rois: false
+      remove_rois: true
       confidence_threshold: 0.0
 
