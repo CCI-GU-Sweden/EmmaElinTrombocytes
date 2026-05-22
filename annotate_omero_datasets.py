@@ -3,7 +3,7 @@ import shutil
 import config
 from datetime import datetime 
 from pathlib import Path
-import distutils.util
+# import distutils.util
 from common import init, download_downscaled_image, class_to_color, get_class_name_from_id, add_common_args, read_config_from_file
 from ccipy.utils.cci_logger import CCILogger
 from ccipy.utils.cci_colors import rgb_color
@@ -11,6 +11,9 @@ from ccipy.yolo_utils.cci_yolo_wrapper import CCIYoloWrapper
 from ccipy.utils.roi_geometry import RoiRectangle
 from ccipy.omero.omero_getter_ctx import OmeroGetterCtx
 from ccipy.omero.geometry_to_roi import geometry_to_roi_shape
+from omero.rtypes import unwrap
+from omero.rtypes import rstring
+import time
 
 def rectangles_intersect(rect1, rect2):
     """Check if two RoiRectangle objects overlap (any intersection counts as within)."""
@@ -20,6 +23,9 @@ def rectangles_intersect(rect1, rect2):
                 rect2.y + rect2.height < rect1.y)
 
 def _unwrap_omero_string(value):
+    print(f"        Unwrapping value: {value} of type {type(value)}")
+    if hasattr(value, "val"):
+        print(f"        Value has 'val' attribute: {value.val}")
     if value is None:
         return None
     return value.val if hasattr(value, "val") else str(value)
@@ -39,29 +45,84 @@ def _get_roi_owner_id(roi):
     owner_id = owner.getId() if owner is not None else None
     return _unwrap_omero_id(owner_id)
 
+def _print_shape_info(roi):
+    
+    print("ROI ID:", unwrap(roi.getId()))
+    print("ROI name:", unwrap(roi.getName()))
+    print("ROI description:", unwrap(roi.getDescription()))
+    print("Number of shapes in ROI: ", len(roi.copyShapes()))
+
+    for shape in roi.copyShapes():
+        print("  shape type:", type(shape))
+        print("  shape id:", unwrap(shape.getId()))
+        print("  shape text:", unwrap(shape.getTextValue()) if hasattr(shape, "getTextValue") else None)
+        print("  shape description:", unwrap(shape.getDescription()) if hasattr(shape, "getDescription") else None)
+
+def _remove_shapes(roi, us, roi_name, roi_description):
+
+    len_before = len(roi.copyShapes())
+    deleted_count = 0
+    for shape in roi.copyShapes():
+        shape_text = unwrap(shape.getTextValue()) if hasattr(shape, "getTextValue") else None
+        shape_description = unwrap(shape.getDescription()) if hasattr(shape, "getDescription") else None
+        matches_name = shape_text == roi_name
+        matches_description = shape_description == roi_description
+        if matches_name or matches_description:
+            us.deleteObject(shape)
+            deleted_count += 1
+            # print(f"      Deleted shape with ID {shape.getId()} because it matches name or description.")
+    if deleted_count == len_before:
+        us.deleteObject(roi)
+    
+    return deleted_count
+
 def remove_owned_ai_rois_from_dataset(omero_conn, dataset_id, roi_name, roi_description):
     current_user_id = _unwrap_omero_id(omero_conn.get_user_id())
     if current_user_id is None:
         CCILogger.warning("Could not resolve current OMERO user id. Skipping ROI removal for safety.")
         return 0
 
+    print(f"roi_name: {roi_name}, roi_description: {roi_description}")
     total_removed = 0
     with OmeroGetterCtx(omero_conn) as getter:
         image_ids = list(getter.get_image_ids_from_dataset(dataset_id))
+        print(f"Number of image IDs = {len(image_ids)}")
         us = omero_conn.get_update_service()
+
+        # test_ids = [24429, 24427, 24382, 24430, 24381]
         for image_id in image_ids:
+            # if image_id not in test_ids:
+            #     continue
+            # print(f"\nImage ID {image_id}")
             rois = getter.get_rois_for_image(image_id)
             removed_on_image = 0
             for roi in rois:
-                owner_id = _get_roi_owner_id(roi)
-                if owner_id != current_user_id:
-                    continue
+                # remember to uncomment the below lines!
+                # owner_id = _get_roi_owner_id(roi)
+                # if owner_id != current_user_id:
+                #     continue
 
-                matches_name = _unwrap_omero_string(roi.getName()) == roi_name
-                matches_description = _unwrap_omero_string(roi.getDescription()) == roi_description
-                if matches_name or matches_description:
-                    us.deleteObject(roi)
-                    removed_on_image += 1
+                # print("Looking at the shapes:")
+                # _print_shape_info(roi)
+
+                # print(f"    ROI ID {roi.getId()}")  # type: {type(roi)}")
+                removed_on_image += _remove_shapes(roi, us, roi_name, roi_description)
+                
+                # # print("****\ntest unwrap roi id, name and description:")
+                # # print(unwrap(roi.getId()), type(roi.getId()))
+                # # print(unwrap(roi.getName()), type(roi.getName()))
+                # # print(unwrap(roi.getDescription()), type(roi.getDescription()))
+                # # print("****\n")
+                # omero_name_str = _unwrap_omero_string(roi.getName())
+                # omero_description_str = _unwrap_omero_string(roi.getDescription())
+                # matches_name = omero_name_str == roi_name
+                # matches_description = omero_description_str == roi_description
+                # # print(f"    ROI name: {omero_name_str}, description: {omero_description_str}")
+                # # print(f"    matches_name: {matches_name}, matches_description: {matches_description}")
+                # if matches_name or matches_description:
+                #     us.deleteObject(roi)
+                #     print(f"    Deleted ROI with ID {roi.getId()} on image ID {image_id} because it matches name or description.")
+                #     removed_on_image += 1
 
             if removed_on_image > 0:
                 CCILogger.info(f"Removed {removed_on_image} own AI ROIs from image ID {image_id}.")
@@ -92,10 +153,10 @@ def main():
     
     parser.add_argument(
         "--filter_border",
-        type=distutils.util.strtobool,
+        action="store_true",
         required=False,
         default=False,
-        help="Filter boxes at the border of the image"
+        help="Filter boxes at the border of the image",
     )
     
     parser.add_argument(
@@ -108,10 +169,10 @@ def main():
     
     parser.add_argument(
         "--remove_rois",
-        type=distutils.util.strtobool,
+        action="store_true",
         required=False,
         default=False,
-        help="Remove existing ROIs from the dataset, using the value from config.AI_ROI_NAME to identify them"
+        help="Remove existing ROIs from the dataset, using the value from config.AI_ROI_NAME to identify them",
     )
     
     parser.add_argument(
@@ -197,8 +258,12 @@ def main():
     connection = init(session_token, group, use_test_host=use_test_host)
 
     if remove_rois:
+        print("Removing existing ROIs...\n")
         remove_owned_ai_rois_from_dataset(connection, dataset_id, config.AI_ROI_NAME, config.AI_ROI_DESCRIPTION)
-        
+    
+    print('Done checking ROI removal')
+    # return
+
     datafiles_path = Path("datafiles")
 
     shutil.rmtree(datafiles_path, ignore_errors=True)
@@ -210,6 +275,7 @@ def main():
     yolo_wrapper = CCIYoloWrapper()
     yolo_wrapper.load_model(weights_path=model_dir)
 
+    inference_start_time = time.time()
     with OmeroGetterCtx(connection) as getter:
 
         now = datetime.now()
@@ -223,11 +289,14 @@ def main():
         csv_file.write("class name,")
         csv_file.write("class id,")
         csv_file.write("color,")
+        csv_file.write("conf,")
         csv_file.write("width,")
         csv_file.write("height\n")
         
     #    for dataset_id in dataset_ids:
-        for img_id in getter.get_image_ids_from_dataset(dataset_id):
+        image_ids = list(getter.get_image_ids_from_dataset(dataset_id))
+        num_imgs = len(image_ids)
+        for img_id in image_ids:
 
             img = getter.conn.get_image(img_id)
             img_name = img.getName()
@@ -287,6 +356,7 @@ def main():
                         continue
                 
                 roi_shape = geometry_to_roi_shape(rect)
+                roi_shape.setTextValue(rstring(config.AI_ROI_NAME)) # added in case L373 doesn't do it
                 shapes.append(roi_shape)
                 CCILogger.info(f"Class ID: {cls_id}, Confidence: {conf:.4f}, Box: {xyxyn}, Color: ({r}, {g}, {b})")
                 
@@ -296,6 +366,7 @@ def main():
                 csv_file.write(f"{class_name},")
                 csv_file.write(f"{cls_id},")
                 csv_file.write(f"{color},")
+                csv_file.write(f"{conf},")
                 csv_file.write(f"{rect.width},")
                 csv_file.write(f"{rect.height}\n")
 
@@ -306,6 +377,9 @@ def main():
         connection.attach_file_to_dataset(dataset_id, output_file, description=f"Annotations for dataset {dataset_id}", mimetype="text/plain")
                 
     CCILogger.info("Done.")
+    elapsed = time.time() - inference_start_time
+    CCILogger.info(f"Inference and annotation on {num_imgs} images took {elapsed:.2f} seconds.")
+    CCILogger.info(f"Average time per image: {elapsed/num_imgs:.2f} seconds.")
     connection.close()
         
 if __name__ == "__main__":
