@@ -148,10 +148,14 @@ def download_downscaled_image(connection: OmeroConnection, img_id: int, images_d
         img = connection.get_image(img_id)
         img_width = img.getSizeX()
         img_height = img.getSizeY()
+        pixels = img.getPrimaryPixels()._obj
+        px_x = pixels.getPhysicalSizeX()
+        px_y = pixels.getPhysicalSizeY()
+
         getter.download_original_image_file(img_id, images_dir)
         new_img_name = downscale_data(images_dir / Path(img.getName()), (img_size, img_size))
         
-        return new_img_name, img_width, img_height
+        return new_img_name, img_width, img_height, px_x.getValue(), px_y.getValue(), px_x.getUnit()
 
 
 def geometry_to_class_definitions(geometry: RoiGeometry, skiplist = []) -> int:
@@ -198,6 +202,19 @@ def class_to_color(class_id: int) -> tuple[int, int, int]:
     else:
         CCILogger.warning(f"Class id {class_id} not according to spec")
         raise ValueError("Wrong class id")
+
+def color_to_class(color: tuple[int, int, int]) -> int:
+    if color == (0, 181, 255):
+        return 0
+    elif color == (255, 255, 0):
+        return 1
+    elif color == (152, 0, 255):
+        return 2
+    elif color == (255, 0, 0):
+        return 3
+    else:
+        CCILogger.warning(f"Color {color} not according to spec")
+        raise ValueError("Wrong color")
 
 def generate_date_directory():
     # Get current date and time
