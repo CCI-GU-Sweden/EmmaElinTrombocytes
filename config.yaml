@@ -66,3 +66,5 @@ annotate:
       #remove rois: true removes rois matching name OR description from config.py AI_ROI_NAME = "from AI" and AI_ROI_DESCRIPTION = "auto annotated"
       remove_rois: true
       confidence_threshold: 0.0
+      min_granule_diameter: 50
+      max_granule_diameter: 300
