@@ -77,7 +77,8 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
-*.ipynb
+download_rare*
+granule_*
 
 # IPython
 profile_default/
@@ -214,3 +215,7 @@ datafiles/*
 dataset-*/*
 dataset/*
 runs/*
+lodestar/
+lightning_logs/
+annotations_csv/
+pixel_classifier/investigate_granules.ipynb
