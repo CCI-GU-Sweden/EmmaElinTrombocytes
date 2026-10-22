@@ -80,6 +80,9 @@ target/
 download_rare*
 granule_*
 
+# pixel classifier runs
+pixel_classifier/runs/
+
 # IPython
 profile_default/
 ipython_config.py

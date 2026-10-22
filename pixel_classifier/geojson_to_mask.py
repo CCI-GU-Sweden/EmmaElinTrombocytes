@@ -81,7 +81,7 @@ names_to_exclude = ["40135_J5_new_x4300_-10um_0002.geojson",
                     "40135_G1_x4300_-10um_0095.geojson"]
 
 for gfile in geojson_dir.glob("*.geojson"):
-    if gfile.name in names_to_exclude:
+    if gfile.name not in names_to_exclude:
         continue
 
     print(gfile)
