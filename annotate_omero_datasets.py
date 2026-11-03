@@ -12,6 +12,7 @@ from omero.gateway import FileAnnotationWrapper
 from omero.model import FileAnnotationI
 from omero.rtypes import rstring
 from common import init, load_inference_image_in_memory, class_to_color, get_class_name_from_id, add_common_args, read_config_from_file
+from common import crop_from_predicted_bbox, evaluate_granule
 from ccipy.utils.cci_logger import CCILogger
 from ccipy.utils.cci_colors import rgb_color
 from ccipy.yolo_utils.cci_yolo_wrapper import CCIYoloWrapper
@@ -61,6 +62,26 @@ def attach_csv_to_dataset(connection, dataset_id, csv_text):
     saved = connection.get_update_service().saveAndReturnObject(annotation)
     dataset.linkAnnotation(FileAnnotationWrapper(gateway, saved))
     CCILogger.info(f"Attached CSV {name} to dataset {dataset_id}.")
+
+
+def pixel_size_nm(image):
+    """Read per-image pixel sizes, rejecting units or anisotropy we cannot evaluate."""
+    pixels = image.getPrimaryPixels()._obj
+    sizes = []
+    for length in (pixels.getPhysicalSizeX(), pixels.getPhysicalSizeY()):
+        if length is None:
+            raise ValueError("Granule quality checks require physical pixel sizes")
+        unit = str(length.getUnit()).lower().split(".")[-1]
+        factors = {"nanometer": 1, "nm": 1, "micrometer": 1000, "µm": 1000, "um": 1000}
+        if unit not in factors:
+            raise ValueError(f"Unsupported pixel size unit: {unit}")
+        value = float(length.getValue()) * factors[unit]
+        if value <= 0:
+            raise ValueError("Pixel size must be positive")
+        sizes.append(value)
+    if abs(sizes[0] - sizes[1]) > max(sizes) * 1e-6:
+        raise ValueError("Granule quality checks require equal X and Y pixel sizes")
+    return sizes[0]
 
 
 def main():
@@ -126,6 +147,8 @@ def main():
     group = args.group if args.group else None
     use_test_host = args.use_test_host
     confidence_threshold = args.confidence_threshold
+    min_granule_diameter = None
+    max_granule_diameter = None
 
     if args.config_name is not None:
         config_from_file = read_config_from_file("annotate", args.config_name)
@@ -144,6 +167,8 @@ def main():
                 raise ValueError("remove_rois must be false: inference preserves existing ROIs")
             border_width = config_from_file.get("border_width", border_width)
             confidence_threshold = config_from_file.get("confidence_threshold", confidence_threshold)
+            min_granule_diameter = config_from_file.get("min_granule_diameter")
+            max_granule_diameter = config_from_file.get("max_granule_diameter")
 
             #overrides for common config with specific config values if they exist
             group = config_from_file.get("omero_group", group)
@@ -155,6 +180,12 @@ def main():
     if group is None:
         CCILogger.error("Group is required. Please provide a group using the --group argument or in the config file.")
         exit(1)
+
+    if (min_granule_diameter is None) != (max_granule_diameter is None):
+        raise ValueError("Both granule diameter limits must be provided in nanometers")
+    quality_enabled = min_granule_diameter is not None
+    if quality_enabled and not (0 <= min_granule_diameter <= max_granule_diameter):
+        raise ValueError("Invalid granule diameter range")
 
     print("Use test host:", use_test_host)
     print("Group:", group)
@@ -188,7 +219,7 @@ def main():
 
         csv_buffer = io.StringIO(newline="")
         csv_writer = csv.writer(csv_buffer)
-        csv_writer.writerow(["dataset", "image name", "image id", "class name", "class id", "color", "width", "height"])
+        csv_writer.writerow(["dataset", "image name", "image id", "pixel size nm", "class name", "class id", "color", "conf", "x topleft pixels", "y topleft pixels", "width pixels", "height pixels", "object diameter nm", "object validity", "rejection reason"])
 
         with OmeroGetterCtx(connection) as getter:
 
@@ -209,6 +240,8 @@ def main():
 
                 CCILogger.info(f"Processing predictions for image {img_id}")
                 boxes = pred[0].boxes
+                px_size = pixel_size_nm(img) if quality_enabled else None
+                img_arr = img.getPrimaryPixels().getPlane(theZ=0, theC=0, theT=0) if quality_enabled else None
 
                 # First pass: collect all cell rectangles
                 cell_rects = []
@@ -252,9 +285,23 @@ def main():
                             CCILogger.info(f"Skipping granule (class {cls_id}) because it is not within any cell")
                             continue
 
+                    object_diameter, quality_check, rejection_reason = None, None, "N.A."
+                    if quality_enabled and class_name == "Cell":
+                        object_diameter = 0.5 * (rect.width + rect.height) * px_size
+                        quality_check = True
+                    elif quality_enabled and class_name == "Granule":
+                        crop = crop_from_predicted_bbox(img_arr, rect)
+                        result = evaluate_granule(crop, pixel_size_nm=px_size, diameter_range=(min_granule_diameter, max_granule_diameter))
+                        if result is None:
+                            quality_check, rejection_reason = False, "No object found"
+                        else:
+                            _, object_diameter, quality_check, rejection_reason = result
+
                     roi_shape = geometry_to_roi_shape(rect)
+                    if quality_check is False:
+                        roi_shape.setTextValue(rstring(class_name + f" ({conf:.2f}) - REJECTED"))
                     shapes.append(roi_shape)
-                    rows.append([dataset_id, img_name, img_id, class_name, cls_id, color, rect.width, rect.height])
+                    rows.append([dataset_id, img_name, img_id, px_size, class_name, cls_id, color, conf, rect.x, rect.y, rect.width, rect.height, object_diameter, quality_check, rejection_reason])
                     CCILogger.info(f"Class ID: {cls_id}, Confidence: {conf:.4f}, Box: {xyxyn}, Color: ({r}, {g}, {b})")
 
                 if shapes:
