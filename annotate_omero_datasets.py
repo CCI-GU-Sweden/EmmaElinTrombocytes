@@ -231,17 +231,17 @@ def main():
                     CCILogger.info(f"Skipping image {img_id}: not an OME-TIF.")
                     continue
 
-                inference_image, img_width, img_height = load_inference_image_in_memory(connection, img, img_size=my_img_size)
+                inference_image, img_arr = load_inference_image_in_memory(img, img_size=my_img_size)
+                img_width, img_height = img.getSizeX(), img.getSizeY()
                 pred = yolo_wrapper.predict(img=inference_image)
                 if not pred or len(pred) == 0:
                     CCILogger.warning(f"No prediction returned for image {img_id}")
-                    del pred, inference_image
+                    del pred, inference_image, img_arr
                     continue
 
                 CCILogger.info(f"Processing predictions for image {img_id}")
                 boxes = pred[0].boxes
                 px_size = pixel_size_nm(img) if quality_enabled else None
-                img_arr = img.getPrimaryPixels().getPlane(theZ=0, theC=0, theT=0) if quality_enabled else None
 
                 # First pass: collect all cell rectangles
                 cell_rects = []
@@ -292,6 +292,7 @@ def main():
                     elif quality_enabled and class_name == "Granule":
                         crop = crop_from_predicted_bbox(img_arr, rect)
                         result = evaluate_granule(crop, pixel_size_nm=px_size, diameter_range=(min_granule_diameter, max_granule_diameter))
+                        del crop
                         if result is None:
                             quality_check, rejection_reason = False, "No object found"
                         else:
@@ -307,7 +308,7 @@ def main():
                 if shapes:
                     getter.set_rois_on_image(img_id, shapes, config.AI_ROI_NAME, config.AI_ROI_DESCRIPTION)
                     csv_writer.writerows(rows)
-                del pred, boxes, inference_image, shapes
+                del pred, boxes, inference_image, img_arr, shapes
 
         attach_csv_to_dataset(connection, dataset_id, csv_buffer.getvalue())
         csv_buffer.close()

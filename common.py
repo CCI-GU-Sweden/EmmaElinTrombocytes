@@ -1,5 +1,4 @@
 import argparse
-from io import BytesIO
 from pathlib import Path
 from datetime import datetime
 import os
@@ -163,38 +162,20 @@ def download_downscaled_image(connection: OmeroConnection, img_id: int, images_d
         return new_img_name, img_width, img_height
 
 
-def load_inference_image_in_memory(connection, image, img_size=512):
-    """Read and preprocess a single-file image without writing it locally."""
-    files = [f for f in image.getImportedImageFiles() if f is not None]
-    if len(files) != 1:
-        raise ValueError("Inference requires exactly one imported original file")
-    original = connection.get_original_file(files[0].getId())
-    if original is None:
-        raise ValueError("Original image file is unavailable")
-    with BytesIO() as buffer:
-        for chunk in original.getFileInChunks():
-            buffer.write(chunk)
-        buffer.seek(0)
-        img = tiff.imread(buffer)
-        # The old path passed an unchanged, target-sized TIFF to Ultralytics,
-        # which loads it through OpenCV in color mode.
-        unchanged_bytes = buffer.getvalue() if img.shape[:2] == (img_size, img_size) else None
+def load_inference_image_in_memory(image, img_size=512):
+    """Read the single TEM plane from OMERO and prepare it for YOLO."""
     width, height = image.getSizeX(), image.getSizeY()
-    if img.ndim not in (2, 3) or img.shape[:2] != (height, width):
-        raise ValueError("Unsupported image dimensions or layout")
-    if img.ndim == 3 and img.shape[2] not in (3, 4):
-        raise ValueError("Expected grayscale, RGB, or RGBA image")
-    if unchanged_bytes is not None:
-        import cv2
-        decoded = cv2.imdecode(np.frombuffer(unchanged_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if decoded is None or decoded.shape[:2] != (height, width):
-            raise ValueError("Unable to decode target-sized image for inference")
-        return Image.fromarray(cv2.cvtColor(decoded, cv2.COLOR_BGR2RGB)), width, height
-    if img.shape[:2] != (img_size, img_size):
-        stretched = color_stretch(img, config.LOW_CUTOFF)
-        shape = (img_size, img_size) + (() if img.ndim == 2 else (img.shape[2],))
-        img = np.clip(resize(stretched, shape, anti_aliasing=True) * 255.0, 0, 255).astype(np.uint8)
-    return Image.fromarray(img).convert("RGB"), width, height
+    if (width, height) != (4096, 4096) or (image.getSizeZ(), image.getSizeC(), image.getSizeT()) != (1, 1, 1):
+        raise ValueError("Inference requires a 4096x4096 single-plane grayscale image")
+    if not 0 < img_size < 4096:
+        raise ValueError("Inference image size must be between 1 and 4095 pixels")
+    plane = image.getPrimaryPixels().getPlane(theZ=0, theC=0, theT=0)
+    if plane.ndim != 2 or plane.shape != (height, width):
+        raise ValueError("OMERO returned an unexpected grayscale plane shape")
+    stretched = color_stretch(plane, config.LOW_CUTOFF)
+    scaled = resize(stretched, (img_size, img_size), anti_aliasing=True)
+    scaled = np.clip(scaled * 255.0, 0, 255).astype(np.uint8)
+    return Image.fromarray(scaled).convert("RGB"), plane
 
 
 def geometry_to_class_definitions(geometry: RoiGeometry, skiplist = []) -> int:

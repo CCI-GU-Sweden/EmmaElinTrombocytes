@@ -61,7 +61,7 @@ Annotate:
 
 config.py contains other important parameters (YOLO_IMAGE_SIZE, BATCH_SIZE...)
 
-Inference downloads and preprocesses one single-file OME-TIF at a time in memory, and saves predictions to OMERO after each image. It builds a dataset CSV in memory and attaches it to the dataset in OMERO when the run completes; it does not save images, the CSV, or a log file locally. Images with unsupported layouts or multiple original files stop the run. Completed images remain annotated if a later image fails, but no CSV is attached for an incomplete run. The training script still uses local image files.
+Inference reads one 4096×4096 single-plane grayscale image directly from OMERO pixels into memory and saves predictions to OMERO after each image. It builds a dataset CSV in memory and attaches it to the dataset in OMERO when the run completes; it does not save images, the CSV, or a log file locally. Images with other dimensions or multiple Z, channel or time planes stop the run. Completed images remain annotated if a later image fails, but no CSV is attached for an incomplete run. The training script still uses local image files.
 
 Memory-only application processing does not prevent the operating system from writing memory to a page file or crash dump. Configure the inference computer accordingly for sensitive data. Any files left by earlier runs remain on disk and need separate handling.
 
