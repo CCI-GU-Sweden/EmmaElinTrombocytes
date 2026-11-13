@@ -214,3 +214,5 @@ datafiles/*
 dataset-*/*
 dataset/*
 runs/*
+lodestar/*
+pixel_classifier/runs*

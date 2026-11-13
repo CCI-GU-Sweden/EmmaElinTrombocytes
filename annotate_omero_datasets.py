@@ -64,6 +64,20 @@ def attach_csv_to_dataset(connection, dataset_id, csv_text):
     CCILogger.info(f"Attached CSV {name} to dataset {dataset_id}.")
 
 
+def remove_ai_rois(connection, image_id):
+    """Delete only ROIs explicitly named 'from AI'; preserve unnamed ROIs."""
+    gateway = connection.get_omero_connection()
+    result = gateway.getRoiService().findByImage(image_id, None)
+    roi_ids = []
+    for roi in result.rois:
+        name = roi.getName()
+        if name is not None and name.getValue() == "from AI":
+            roi_ids.append(roi.getId().getValue())
+    if roi_ids:
+        gateway.deleteObjects("Roi", roi_ids, wait=True)
+        CCILogger.info(f"Deleted {len(roi_ids)} ROIs named 'from AI' from image {image_id}.")
+
+
 def pixel_size_nm(image):
     """Read per-image pixel sizes, rejecting units or anisotropy we cannot evaluate."""
     pixels = image.getPrimaryPixels()._obj
@@ -137,7 +151,7 @@ def main():
         CCILogger.error("Token is required. Please provide a token using the --token argument.")
         exit(1)
 
-    dataset_id = args.dataset
+    dataset_ids = [args.dataset] if args.dataset is not None else []
     token = args.token
     model_dir = ""
     if args.model_dir is not None:
@@ -149,6 +163,7 @@ def main():
     confidence_threshold = args.confidence_threshold
     min_granule_diameter = None
     max_granule_diameter = None
+    remove_rois = False
 
     if args.config_name is not None:
         config_from_file = read_config_from_file("annotate", args.config_name)
@@ -160,11 +175,13 @@ def main():
             use_test_host = common_config.get("use_test_host", use_test_host)
 
             #read specific config values
-            dataset_id = config_from_file.get("dataset_id", dataset_id)
+            if "dataset_ids" in config_from_file:
+                dataset_ids = config_from_file["dataset_ids"]
+            elif "dataset_id" in config_from_file:
+                dataset_ids = [config_from_file["dataset_id"]]
             model_dir = Path(config_from_file.get("model_dir", model_dir))
             filter_border = config_from_file.get("filter_border", filter_border)
-            if config_from_file.get("remove_rois", False):
-                raise ValueError("remove_rois must be false: inference preserves existing ROIs")
+            remove_rois = config_from_file.get("remove_rois", False)
             border_width = config_from_file.get("border_width", border_width)
             confidence_threshold = config_from_file.get("confidence_threshold", confidence_threshold)
             min_granule_diameter = config_from_file.get("min_granule_diameter")
@@ -176,6 +193,13 @@ def main():
         else:
             CCILogger.warning(f"Could not read config {args.config_name} from file config file.")
             exit(1)
+
+    if not isinstance(remove_rois, bool):
+        raise ValueError("remove_rois must be true or false")
+    if not isinstance(dataset_ids, list) or not dataset_ids or any(type(dataset_id) is not int or dataset_id <= 0 for dataset_id in dataset_ids):
+        raise ValueError("Provide a non-empty list of positive integer dataset IDs")
+    if len(set(dataset_ids)) != len(dataset_ids):
+        raise ValueError("Dataset IDs must not contain duplicates")
 
     if group is None:
         CCILogger.error("Group is required. Please provide a group using the --group argument or in the config file.")
@@ -190,9 +214,10 @@ def main():
     print("Use test host:", use_test_host)
     print("Group:", group)
 
-    print("Dataset:", dataset_id)
+    print("Datasets:", dataset_ids)
 
-    print("Existing ROIs will be preserved.")
+    print("Delete existing ROIs named exactly 'from AI' on eligible images:", remove_rois)
+    print("Unnamed and differently named ROIs will be preserved.")
     print("ROI name:", config.AI_ROI_NAME)
     print("ROI description:", config.AI_ROI_DESCRIPTION)
 
@@ -217,101 +242,114 @@ def main():
         yolo_wrapper = CCIYoloWrapper()
         yolo_wrapper.load_model(weights_path=model_dir)
 
-        csv_buffer = io.StringIO(newline="")
-        csv_writer = csv.writer(csv_buffer)
-        csv_writer.writerow(["dataset", "image name", "image id", "pixel size nm", "class name", "class id", "color", "conf", "x topleft pixels", "y topleft pixels", "width pixels", "height pixels", "object diameter nm", "object validity", "rejection reason"])
+        for dataset_id in dataset_ids:
+            CCILogger.info(f"Processing dataset {dataset_id}.")
+            csv_buffer = io.StringIO(newline="")
+            csv_writer = csv.writer(csv_buffer)
+            csv_writer.writerow(["dataset", "image name", "image id", "pixel size nm", "class name", "class id", "color", "conf", "x topleft pixels", "y topleft pixels", "width pixels", "height pixels", "object diameter nm", "object validity", "rejection reason"])
+            row_count = 0
 
-        with OmeroGetterCtx(connection) as getter:
+            with OmeroGetterCtx(connection) as getter:
 
-            for img_id in getter.get_image_ids_from_dataset(dataset_id):
+                for img_id in getter.get_image_ids_from_dataset(dataset_id):
 
-                img = getter.conn.get_image(img_id)
-                img_name = img.getName()
-                if not img_name.endswith("ome.tif"):
-                    CCILogger.info(f"Skipping image {img_id}: not an OME-TIF.")
-                    continue
+                    img = getter.conn.get_image(img_id)
+                    img_name = img.getName()
+                    if not (img_name.endswith("ome.tif") or img_name.endswith("ome.tiff")):
+                        CCILogger.info(f"Skipping image {img_id}: not an OME-TIF or OME-TIFF.")
+                        continue
 
-                inference_image, img_arr = load_inference_image_in_memory(img, img_size=my_img_size)
-                img_width, img_height = img.getSizeX(), img.getSizeY()
-                pred = yolo_wrapper.predict(img=inference_image)
-                if not pred or len(pred) == 0:
-                    CCILogger.warning(f"No prediction returned for image {img_id}")
-                    del pred, inference_image, img_arr
-                    continue
+                    if (img.getSizeX(), img.getSizeY()) != (4096, 4096) or (img.getSizeZ(), img.getSizeC(), img.getSizeT()) != (1, 1, 1):
+                        CCILogger.warning(f"Skipping image {img_id}: inference requires a 4096x4096 single-plane grayscale image.")
+                        continue
 
-                CCILogger.info(f"Processing predictions for image {img_id}")
-                boxes = pred[0].boxes
-                px_size = pixel_size_nm(img) if quality_enabled else None
+                    if remove_rois:
+                        remove_ai_rois(connection, img_id)
+                    inference_image, img_arr = load_inference_image_in_memory(img, img_size=my_img_size)
+                    img_width, img_height = img.getSizeX(), img.getSizeY()
+                    pred = yolo_wrapper.predict(img=inference_image)
+                    if not pred or len(pred) == 0:
+                        CCILogger.warning(f"No prediction returned for image {img_id}")
+                        del pred, inference_image, img_arr
+                        continue
 
-                # First pass: collect all cell rectangles
-                cell_rects = []
-                for box in boxes:
-                    cls_id = int(box.cls[0])
-                    if cls_id == 0:  # Cell class
+                    CCILogger.info(f"Processing predictions for image {img_id}")
+                    boxes = pred[0].boxes
+                    px_size = pixel_size_nm(img) if quality_enabled else None
+
+                    # First pass: collect all cell rectangles
+                    cell_rects = []
+                    for box in boxes:
+                        cls_id = int(box.cls[0])
+                        if cls_id == 0:  # Cell class
+                            conf = float(box.conf[0])
+                            if conf < confidence_threshold:
+                                continue
+                            xyxyn = box.xyxyn[0].tolist()
+                            rect = RoiRectangle.from_normalized_xyxy(xyxyn[0], xyxyn[1], xyxyn[2], xyxyn[3], img_width, img_height, None, "Cell")
+                            if not (filter_border and (rect.x <= border_width or rect.y <= border_width or rect.x + rect.width >= img_width - border_width or rect.y + rect.height >= img_height - border_width)):
+                                cell_rects.append(rect)
+
+                    # Second pass: process all boxes
+                    shapes = []
+                    rows = []
+                    for box in boxes:
+                        cls_id = int(box.cls[0])
                         conf = float(box.conf[0])
                         if conf < confidence_threshold:
+                            CCILogger.warning(f"Skipping box with confidence {conf:.4f} below threshold {confidence_threshold}")
                             continue
-                        xyxyn = box.xyxyn[0].tolist()
-                        rect = RoiRectangle.from_normalized_xyxy(xyxyn[0], xyxyn[1], xyxyn[2], xyxyn[3], img_width, img_height, None, "Cell")
-                        if not (filter_border and (rect.x <= border_width or rect.y <= border_width or rect.x + rect.width >= img_width - border_width or rect.y + rect.height >= img_height - border_width)):
-                            cell_rects.append(rect)
+                        xyxyn = box.xyxyn[0].tolist()  # [x1, y1, w, h] normalized
+                        class_name = get_class_name_from_id(cls_id)
+                        r,g,b = class_to_color(cls_id)
+                        color = rgb_color(r, g, b)
+                        rect = RoiRectangle.from_normalized_xyxy(xyxyn[0], xyxyn[1], xyxyn[2], xyxyn[3], img_width, img_height, color, class_name + f" ({conf:.2f})")
 
-                # Second pass: process all boxes
-                shapes = []
-                rows = []
-                for box in boxes:
-                    cls_id = int(box.cls[0])
-                    conf = float(box.conf[0])
-                    if conf < confidence_threshold:
-                        CCILogger.warning(f"Skipping box with confidence {conf:.4f} below threshold {confidence_threshold}")
-                        continue
-                    xyxyn = box.xyxyn[0].tolist()  # [x1, y1, w, h] normalized
-                    class_name = get_class_name_from_id(cls_id)
-                    r,g,b = class_to_color(cls_id)
-                    color = rgb_color(r, g, b)
-                    rect = RoiRectangle.from_normalized_xyxy(xyxyn[0], xyxyn[1], xyxyn[2], xyxyn[3], img_width, img_height, color, class_name + f" ({conf:.2f})")
-
-                    #filter this rect if it is at the border of the image
-                    if filter_border and (rect.x <= border_width or rect.y <= border_width or rect.x + rect.width >= img_width - border_width or rect.y + rect.height >= img_height - border_width):
-                        CCILogger.warning(f"Skipping box at image border: {rect.x}, {rect.y}, {rect.width}, {rect.height}")
-                        continue
-
-                    # Filter granules: keep only if they overlap with at least one cell
-                    if cls_id in [1, 2, 3]:  # Granule classes
-                        if not cell_rects:
-                            CCILogger.warning(f"Skipping granule (class {cls_id}) because no cells were detected in image")
-                            continue
-                        if not any(rectangles_intersect(rect, cell_rect) for cell_rect in cell_rects):
-                            CCILogger.info(f"Skipping granule (class {cls_id}) because it is not within any cell")
+                        #filter this rect if it is at the border of the image
+                        if filter_border and (rect.x <= border_width or rect.y <= border_width or rect.x + rect.width >= img_width - border_width or rect.y + rect.height >= img_height - border_width):
+                            CCILogger.warning(f"Skipping box at image border: {rect.x}, {rect.y}, {rect.width}, {rect.height}")
                             continue
 
-                    object_diameter, quality_check, rejection_reason = None, None, "N.A."
-                    if quality_enabled and class_name == "Cell":
-                        object_diameter = 0.5 * (rect.width + rect.height) * px_size
-                        quality_check = True
-                    elif quality_enabled and class_name == "Granule":
-                        crop = crop_from_predicted_bbox(img_arr, rect)
-                        result = evaluate_granule(crop, pixel_size_nm=px_size, diameter_range=(min_granule_diameter, max_granule_diameter))
-                        del crop
-                        if result is None:
-                            quality_check, rejection_reason = False, "No object found"
-                        else:
-                            _, object_diameter, quality_check, rejection_reason = result
+                        # Filter granules: keep only if they overlap with at least one cell
+                        if cls_id in [1, 2, 3]:  # Granule classes
+                            if not cell_rects:
+                                CCILogger.warning(f"Skipping granule (class {cls_id}) because no cells were detected in image")
+                                continue
+                            if not any(rectangles_intersect(rect, cell_rect) for cell_rect in cell_rects):
+                                CCILogger.info(f"Skipping granule (class {cls_id}) because it is not within any cell")
+                                continue
 
-                    roi_shape = geometry_to_roi_shape(rect)
-                    if quality_check is False:
-                        roi_shape.setTextValue(rstring(class_name + f" ({conf:.2f}) - REJECTED"))
-                    shapes.append(roi_shape)
-                    rows.append([dataset_id, img_name, img_id, px_size, class_name, cls_id, color, conf, rect.x, rect.y, rect.width, rect.height, object_diameter, quality_check, rejection_reason])
-                    CCILogger.info(f"Class ID: {cls_id}, Confidence: {conf:.4f}, Box: {xyxyn}, Color: ({r}, {g}, {b})")
+                        object_diameter, quality_check, rejection_reason = None, None, "N.A."
+                        if quality_enabled and class_name == "Cell":
+                            object_diameter = 0.5 * (rect.width + rect.height) * px_size
+                            quality_check = True
+                        elif quality_enabled and class_name == "Granule":
+                            crop = crop_from_predicted_bbox(img_arr, rect)
+                            result = evaluate_granule(crop, pixel_size_nm=px_size, diameter_range=(min_granule_diameter, max_granule_diameter))
+                            del crop
+                            if result is None:
+                                quality_check, rejection_reason = False, "No object found"
+                            else:
+                                _, object_diameter, quality_check, rejection_reason = result
 
-                if shapes:
-                    getter.set_rois_on_image(img_id, shapes, config.AI_ROI_NAME, config.AI_ROI_DESCRIPTION)
-                    csv_writer.writerows(rows)
-                del pred, boxes, inference_image, img_arr, shapes
+                        roi_shape = geometry_to_roi_shape(rect)
+                        if quality_check is False:
+                            roi_shape.setTextValue(rstring(class_name + f" ({conf:.2f}) - REJECTED"))
+                        shapes.append(roi_shape)
+                        rows.append([dataset_id, img_name, img_id, px_size, class_name, cls_id, color, conf, rect.x, rect.y, rect.width, rect.height, object_diameter, quality_check, rejection_reason])
+                        CCILogger.info(f"Class ID: {cls_id}, Confidence: {conf:.4f}, Box: {xyxyn}, Color: ({r}, {g}, {b})")
 
-        attach_csv_to_dataset(connection, dataset_id, csv_buffer.getvalue())
-        csv_buffer.close()
+                    if shapes:
+                        getter.set_rois_on_image(img_id, shapes, config.AI_ROI_NAME, config.AI_ROI_DESCRIPTION)
+                        csv_writer.writerows(rows)
+                        row_count += len(rows)
+                    del pred, boxes, inference_image, img_arr, shapes
+
+            if row_count:
+                attach_csv_to_dataset(connection, dataset_id, csv_buffer.getvalue())
+            else:
+                CCILogger.info(f"No annotation rows for dataset {dataset_id}; no CSV attached.")
+            csv_buffer.close()
         CCILogger.info("Done.")
     finally:
         connection.close()

@@ -52,16 +52,16 @@ ignore_rois_by_xxx should be considered mutual exclusive! Both are optional thou
 Annotate:
 
 - name: name of the annotation config <annotate_cells_and_granules>
-- dataset_id: dataset to annotate. Int <2401>
+- dataset_ids: datasets to annotate in order. List of unique positive integers, for example `[2401, 2402]`. A single `dataset_id` is also supported for older configs.
 - model_dir: Model path to use for the annotation. Local! String <"cells_and_granules\\2026-03-04\\11-31\\best.pt">
 - filter_border: Remove any object on the edge/border of the image. Bool <true>
 - border_width: Remove any object close of the boerder by pixel. Int <10>
-- remove_rois: Must be false. Inference preserves existing ROIs and adds new predictions; repeated runs can create duplicates.
+- remove_rois: When `true`, delete existing ROIs named exactly `from AI` from each eligible image before inference. When `false`, preserve all existing ROIs. Unnamed and differently named ROIs are always preserved.
 - confidence_threshold: minimum threshold to take in account for the annotation. Float (0-1) <0.0>
 
 config.py contains other important parameters (YOLO_IMAGE_SIZE, BATCH_SIZE...)
 
-Inference reads one 4096×4096 single-plane grayscale image directly from OMERO pixels into memory and saves predictions to OMERO after each image. It builds a dataset CSV in memory and attaches it to the dataset in OMERO when the run completes; it does not save images, the CSV, or a log file locally. Images with other dimensions or multiple Z, channel or time planes stop the run. Completed images remain annotated if a later image fails, but no CSV is attached for an incomplete run. The training script still uses local image files.
+Inference reads one 4096×4096 single-plane grayscale image directly from OMERO pixels into memory and saves predictions to OMERO after each image. It builds a dataset CSV in memory and attaches it to the dataset in OMERO when the run completes if it contains prediction rows; it does not save images, the CSV, or a log file locally. Images with other dimensions or multiple Z, channel or time planes are logged and skipped, with their ROIs untouched. Other errors stop the run: completed images remain annotated, the current image may already have lost its old AI ROIs if `remove_rois` is true, no CSV is attached for the incomplete dataset, and later datasets are not processed. The training script still uses local image files.
 
 Memory-only application processing does not prevent the operating system from writing memory to a page file or crash dump. Configure the inference computer accordingly for sensitive data. Any files left by earlier runs remain on disk and need separate handling.
 
