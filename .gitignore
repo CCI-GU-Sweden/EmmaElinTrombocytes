@@ -77,7 +77,11 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
-*.ipynb
+download_rare*
+granule_*
+
+# pixel classifier runs
+pixel_classifier/runs/
 
 # IPython
 profile_default/
@@ -214,6 +218,8 @@ datafiles/*
 dataset-*/*
 dataset/*
 runs/*
-lodestar/*
+lodestar/
+lightning_logs/
+annotations_csv/
 pixel_classifier/runs*
 evaluation/
