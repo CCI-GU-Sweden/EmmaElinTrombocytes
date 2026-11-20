@@ -59,7 +59,7 @@ annotate:
   configs:
     - config:
       name: annotate_cells_and_granules
-      dataset_ids: [1214, 1305, 1551, 1952, 2202, 3751, 3203, 1354, 6904] # 1226 was also requested, used it to test multi-dataset annotation and the inference results are on omero
+      dataset_ids: [1214, 1226, 1305, 1551, 1952, 2202, 3751, 3203, 1354, 6904] # 1226 was also requested, used it to test multi-dataset annotation and the inference results are on omero
       model_dir: "cells_and_granules/2026-04-16/06-47/best.pt"
       filter_border: true
       border_width: 10
@@ -68,3 +68,13 @@ annotate:
       confidence_threshold: 0.0
       min_granule_diameter: 50
       max_granule_diameter: 300
+
+evaluate:
+  common:
+    use_test_host: false
+    omero_group: "Emma-Josefsson-Lab"
+
+  configs:
+    - config:
+      name: evaluate_cells_and_granules
+      dataset_ids: [1214, 1226, 1305, 1551, 1952, 2202, 3751, 3203, 1354, 6904]
