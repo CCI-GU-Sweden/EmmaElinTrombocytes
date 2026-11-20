@@ -221,4 +221,5 @@ runs/*
 lodestar/
 lightning_logs/
 annotations_csv/
-pixel_classifier/investigate_granules.ipynb
+pixel_classifier/runs*
+evaluation/

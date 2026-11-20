@@ -36,22 +36,22 @@ def add_common_args(parser: argparse.ArgumentParser):
         '--config_name',
         type=str,
         required=False,
-        help='Name of the configuration to use from the config.yaml file') 
-    
+        help='Name of the configuration to use from the config.yaml file')
+
     parser.add_argument(
         "--token",
         type=str,
         required=True,
         help="Token for OMERO connection"
     )
-    
+
     parser.add_argument(
         "--group",
         type=str,
         required=False,
         help="Group to use for the OMERO session"
     )
-    
+
     parser.add_argument(
         "--use_test_host",
         type=distutils.util.strtobool,
@@ -60,7 +60,7 @@ def add_common_args(parser: argparse.ArgumentParser):
         help="Use test host"
     )
 
-                        
+
 def read_config_from_file(config_type: str,  config_name: str = "", config_file: str = "config.yaml") -> tuple[dict, dict] | None:
     with open(config_file, 'r') as f:
         config_dict = yaml.load(f, Loader=Loader)
@@ -74,7 +74,7 @@ def read_config_from_file(config_type: str,  config_name: str = "", config_file:
         if conf is None:
             CCILogger.error(f"Config name {config_name} not found in config file {config_file}")
             return None
-        
+
         return common, conf
 
 def init(session_token: str, session_group: str, use_test_host: bool = False, init_log: bool = True) -> OmeroConnection:
@@ -86,26 +86,28 @@ def init(session_token: str, session_group: str, use_test_host: bool = False, in
         connection = OmeroConnection(config.OMERO_TEST_HOST,config.OMERO_PORT,session_token)
     else:
         connection = OmeroConnection(config.OMERO_HOST,config.OMERO_PORT,session_token)
-    
+
     connection.set_group_name_for_session(session_group)
     return connection
 
 def color_stretch(img, low_cut_off, low_pt=1, high_pt=99):
 
     #check if large portion are zeroes
-    
+
     dark = np.extract(img < low_cut_off, img)
     if (frac := len(dark) / img.size) > config.FRACTION_DARK_TO_USE_CUTOFF:
         CCILogger.info(f"Image has more ({frac*100:.2f}%) pixels than {config.FRACTION_DARK_TO_USE_CUTOFF*100}% below low_cutoff={low_cut_off}, filtering")
 
         img_bool = img > low_cut_off
         img_filterd = img[img_bool]
+        if img_filterd.size == 0:
+            return np.zeros(img.shape, dtype=np.uint8)
         lo = np.percentile(img_filterd, low_pt)
         hi = np.percentile(img_filterd, high_pt)
     else:
         lo = np.percentile(img, low_pt)
         hi = np.percentile(img, high_pt)
-    
+
     img = img.astype(np.float32)
 
     if hi <= lo:
@@ -123,13 +125,13 @@ def downscale_data(image: Path, target_size: tuple[int, int]) -> Path | None:
     if original_size != target_size:
         CCILogger.info(f"Color stretching image {image.name} of type {img.dtype}")
         stretched = color_stretch(img, config.LOW_CUTOFF)
-        
+
         CCILogger.info(f"Downscaling image {image.name} from {original_size} to {target_size}")
         if len(img.shape) == 3:
             downscaled_img = resize(stretched, target_size + (img.shape[2],), anti_aliasing=True)
         else:
             downscaled_img = resize(stretched, target_size, anti_aliasing=True)
-            
+
         downscaled_img = downscaled_img * 255.0
 
         downscaled_img = np.clip(downscaled_img, 0, 255).astype(np.uint8)
@@ -139,7 +141,7 @@ def downscale_data(image: Path, target_size: tuple[int, int]) -> Path | None:
             img_name_png = str(image).replace(".ome.tiff",".png")
         if str(image).endswith("ome.tif"):
             img_name_png = str(image).replace(".ome.tif",".png")
-    
+
         im.save(img_name_png)
 
         #tiff.imwrite(img_name_tif, downscaled_img)
@@ -154,14 +156,26 @@ def download_downscaled_image(connection: OmeroConnection, img_id: int, images_d
         img = connection.get_image(img_id)
         img_width = img.getSizeX()
         img_height = img.getSizeY()
-        pixels = img.getPrimaryPixels()._obj
-        px_x = pixels.getPhysicalSizeX()
-        px_y = pixels.getPhysicalSizeY()
-
         getter.download_original_image_file(img_id, images_dir)
         new_img_name = downscale_data(images_dir / Path(img.getName()), (img_size, img_size))
-        
-        return new_img_name, img_width, img_height, px_x.getValue(), px_y.getValue(), px_x.getUnit()
+
+        return new_img_name, img_width, img_height
+
+
+def load_inference_image_in_memory(image, img_size=512):
+    """Read the single TEM plane from OMERO and prepare it for YOLO."""
+    width, height = image.getSizeX(), image.getSizeY()
+    if (width, height) != (4096, 4096) or (image.getSizeZ(), image.getSizeC(), image.getSizeT()) != (1, 1, 1):
+        raise ValueError("Inference requires a 4096x4096 single-plane grayscale image")
+    if not 0 < img_size < 4096:
+        raise ValueError("Inference image size must be between 1 and 4095 pixels")
+    plane = image.getPrimaryPixels().getPlane(theZ=0, theC=0, theT=0)
+    if plane.ndim != 2 or plane.shape != (height, width):
+        raise ValueError("OMERO returned an unexpected grayscale plane shape")
+    stretched = color_stretch(plane, config.LOW_CUTOFF)
+    scaled = resize(stretched, (img_size, img_size), anti_aliasing=True)
+    scaled = np.clip(scaled * 255.0, 0, 255).astype(np.uint8)
+    return Image.fromarray(scaled).convert("RGB"), plane
 
 
 def geometry_to_class_definitions(geometry: RoiGeometry, skiplist = []) -> int:
@@ -194,8 +208,8 @@ def geometry_to_class_definitions(geometry: RoiGeometry, skiplist = []) -> int:
     else:
         CCILogger.warning(f"Color on geometry is not according to spec {r} {g} {b}")
         raise ValueError("Wrong color")
-    
-    
+
+
 def class_to_color(class_id: int) -> tuple[int, int, int]:
     if class_id == 0:
         return (0, 181, 255)
@@ -289,7 +303,7 @@ def get_crops_and_rois_from_dataset(omero_conn, dataset_id, crops_dir, num_crops
     if current_user_id is None:
         CCILogger.warning("Could not resolve current OMERO user id. Skipping ROI removal for safety.")
         return 0
-    
+
     csv_path = crops_dir / "crop_info.csv"
     crop_rows = []
     granule_counter = 0
@@ -304,7 +318,7 @@ def get_crops_and_rois_from_dataset(omero_conn, dataset_id, crops_dir, num_crops
             crop_bounds = -1
         else:
             crop_bounds = num_crops
-        
+
         for image_id in image_ids[:crop_bounds]:
             # getter.download_original_image_file(image_id, images_dir)
             if image_id == 24428:
@@ -416,7 +430,7 @@ def get_crops_and_rois_from_dataset(omero_conn, dataset_id, crops_dir, num_crops
         )
         writer.writeheader()
         writer.writerows(crop_rows)
-    
+
     return
 
 def znorm(img):
@@ -424,9 +438,9 @@ def znorm(img):
 
 '''
 Let's collect the above operation into one function
-Inputs: crop of the bounding box from the raw image array, 
-        pixel size in nm, 
-        diameter range, 
+Inputs: crop of the bounding box from the raw image array,
+        pixel size in nm,
+        diameter range,
         max aspect ratio
 Returns: diameter in nm given as major / minor axis length,
          boolean for whether granule is valid
@@ -459,26 +473,26 @@ def diameter_from_mask_touching_border(img_mask, px_size=3.22):
     )
     valid_angles = ~polar_mask[:, -5]
     selected_polar_mask = polar_mask[valid_angles, :]
-    
+
     selected_zeros = find_zeros(selected_polar_mask)
 
     return np.median(selected_zeros) * px_size * 2
 
 def evaluate_granule(img_arr, pixel_size_nm=3.22, diameter_range=(50, 300), aspect_ratio_max=1.25):
-    
+
     # normalize
     img = znorm(img_arr)
     # img = median(img, disk(3))
     img = gaussian(img, sigma=1, preserve_range=True)
-    
+
     # thresholding
     img_otsu = img < threshold_otsu(img)
-    
+
     # morphological operations
     img_mask = remove_small_holes(img_otsu)
-    img_mask = remove_small_objects(img_mask, max_size=50)
+    img_mask = remove_small_objects(img_mask, min_size=51)
     img_mask = closing(img_mask, disk(3))
-    
+
     mask_touching_border = mask_touches_border(img_mask)
     print(f"mask_touches_border: {mask_touching_border}")
 
@@ -488,16 +502,16 @@ def evaluate_granule(img_arr, pixel_size_nm=3.22, diameter_range=(50, 300), aspe
         # labeling and region properties
         lab = label(img_mask)
         props = regionprops(lab)
-        
+
         if len(props) == 0:
             return None  # No objects found
-        
+
         obj = props[0]
-        
+
         major = obj.axis_major_length
         minor = obj.axis_minor_length
         diameter_mean_axes = (major + minor) / 2
-        
+
         # check the quality of the granule based on diameter and aspect ratio
         # Check diameter range and aspect ratio
         quality_check = True
@@ -511,9 +525,9 @@ def evaluate_granule(img_arr, pixel_size_nm=3.22, diameter_range=(50, 300), aspe
         if aspect_ratio > aspect_ratio_max:
             quality_check = False  # Aspect ratio too high
             rejection_reason = "Shape too thin"
-        
+
         return img_mask, diameter_mean_axes * pixel_size_nm, quality_check, rejection_reason
-    
+
     else:
         diameter_median = diameter_from_mask_touching_border(img_mask, pixel_size_nm)
         if not (diameter_range[0] <= diameter_median <= diameter_range[1]):
@@ -521,9 +535,9 @@ def evaluate_granule(img_arr, pixel_size_nm=3.22, diameter_range=(50, 300), aspe
             rejection_reason = "Diameter out of range"
         else:
             quality_check = True
-        
+
         return img_mask, diameter_median, quality_check, rejection_reason
-    
+
 
 
 '''
@@ -580,7 +594,7 @@ def _save_roi_crops_for_image(image_path: Path, image_id: int, rois, crops_dir: 
 
 
 def _print_shape_info(roi):
-    
+
     print("ROI ID:", unwrap(roi.getId()))
     print("ROI name:", unwrap(roi.getName()))
     print("ROI description:", unwrap(roi.getDescription()))
